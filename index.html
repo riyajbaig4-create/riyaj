@@ -1,0 +1,2598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PYTHON HOSTING</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: #050807; 
+            color: #00ff88; 
+            font-family: 'Courier New', monospace; 
+            display: flex; 
+            justify-content: center; 
+            align-items: flex-start; 
+            min-height: 100vh; 
+            padding: 20px 10px;
+            background-image: radial-gradient(circle at 20% 30%, rgba(0,255,136,0.03) 0%, transparent 60%);
+        }
+
+        #loader { 
+            position: fixed; 
+            top: 0; left: 0; 
+            width: 100%; height: 100%; 
+            background: #050807; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            z-index: 1000; 
+            transition: opacity 0.6s ease; 
+        }
+        .loader-ring {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-top: 3px solid #00ff88;
+            border-right: 3px solid #33ddff;
+            animation: spin 0.8s linear infinite;
+            position: relative;
+            margin-bottom: 24px;
+        }
+        .loader-ring::before {
+            content: '';
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            right: 8px;
+            bottom: 8px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-bottom: 3px solid #00ff88;
+            border-left: 3px solid #33ddff;
+            animation: spin 0.5s linear infinite reverse;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loader .loader-text {
+            font-size: 0.9rem;
+            letter-spacing: 6px;
+            opacity: 0.6;
+            text-transform: uppercase;
+            background: linear-gradient(90deg, #00ff88, #33ddff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: pulseText 1.5s ease-in-out infinite;
+        }
+        @keyframes pulseText {
+            0%, 100% { opacity: 0.6; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.02); }
+        }
+        #loader .loader-progress {
+            margin-top: 16px;
+            width: 200px;
+            height: 2px;
+            background: rgba(0,255,136,0.08);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        #loader .loader-progress .bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #00ff88, #33ddff);
+            border-radius: 2px;
+            transition: width 0.15s ease;
+        }
+
+        .auth-container { 
+            border: 1.5px solid rgba(0,255,136,0.15); 
+            padding: 35px 30px 30px; 
+            width: 340px; 
+            background: rgba(5,8,7,0.9); 
+            text-align: center; 
+            border-radius: 12px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+            margin-top: 50px;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        .auth-container.hidden { 
+            opacity: 0;
+            transform: scale(0.96);
+            pointer-events: none;
+            display: none;
+        }
+        .auth-container .brand h1 {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #00ff88;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            text-shadow: 0 0 40px rgba(0,255,136,0.1);
+        }
+        .auth-container .brand .highlight { color: #33ddff; text-shadow: 0 0 30px rgba(51,221,255,0.1); }
+        .auth-container .brand .sub {
+            font-size: 0.6rem;
+            letter-spacing: 5px;
+            opacity: 0.3;
+            margin-top: 4px;
+            text-transform: uppercase;
+        }
+        .auth-container .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0,255,136,0.15), transparent);
+            margin: 16px 0 20px 0;
+        }
+        .auth-container h2 {
+            font-size: 0.7rem;
+            letter-spacing: 4px;
+            opacity: 0.4;
+            font-weight: 400;
+            margin-bottom: 18px;
+            text-transform: uppercase;
+        }
+        .auth-container .input-group { text-align: left; margin-bottom: 14px; }
+        .auth-container .input-group label {
+            display: block;
+            font-size: 0.65rem;
+            letter-spacing: 2px;
+            opacity: 0.5;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+        .auth-container .input-group input {
+            width: 100%;
+            background: rgba(0,0,0,0.6);
+            border: 1.5px solid rgba(0,255,136,0.12);
+            color: #00ff88;
+            padding: 12px 14px;
+            border-radius: 8px;
+            outline: none;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            transition: border-color 0.3s;
+        }
+        .auth-container .input-group input:focus {
+            border-color: rgba(0,255,136,0.4);
+            box-shadow: 0 0 30px rgba(0,255,136,0.04);
+        }
+        .auth-container .btn-primary {
+            width: 100%;
+            padding: 14px;
+            margin-top: 8px;
+            cursor: pointer;
+            border: 1.5px solid rgba(0,255,136,0.3);
+            background: rgba(0,255,136,0.04);
+            color: #00ff88;
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .auth-container .btn-primary:hover {
+            background: #00ff88;
+            color: #000;
+            border-color: #00ff88;
+            box-shadow: 0 0 40px rgba(0,255,136,0.15);
+        }
+        .auth-container .btn-secondary {
+            width: 100%;
+            padding: 14px;
+            margin-top: 8px;
+            cursor: pointer;
+            border: 1.5px solid rgba(51,221,255,0.2);
+            background: rgba(51,221,255,0.03);
+            color: #33ddff;
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            letter-spacing: 1px;
+            text-decoration: none;
+            display: block;
+            text-align: center;
+        }
+        .auth-container .btn-secondary:hover {
+            background: #33ddff;
+            color: #000;
+            border-color: #33ddff;
+            box-shadow: 0 0 40px rgba(51,221,255,0.12);
+        }
+        .auth-container .footer-text {
+            margin-top: 22px;
+            font-size: 0.55rem;
+            opacity: 0.2;
+            letter-spacing: 2px;
+            line-height: 1.8;
+            text-transform: uppercase;
+        }
+        .auth-container .login-error {
+            color: #ff4466;
+            font-size: 0.7rem;
+            margin-top: 8px;
+            display: none;
+        }
+        .auth-container .login-error.show { display: block; }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-6px); }
+            40%, 80% { transform: translateX(6px); }
+        }
+        .shake { animation: shake 0.4s ease; }
+
+        .toast {
+            position: fixed;
+            top: 25px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-120px);
+            background: rgba(0,255,136,0.06);
+            border: 1.5px solid rgba(0,255,136,0.25);
+            color: #00ff88;
+            padding: 16px 32px;
+            border-radius: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            z-index: 9999;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 8px 50px rgba(0,0,0,0.9);
+            transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+            opacity: 0;
+            pointer-events: none;
+            text-align: center;
+            min-width: 280px;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .toast .toast-icon { font-size: 1.4rem; display: block; margin-bottom: 3px; }
+        .toast .toast-sub { font-size: 0.55rem; opacity: 0.35; margin-top: 3px; letter-spacing: 2px; }
+        .toast.error {
+            border-color: rgba(255,51,85,0.35);
+            color: #ff4466;
+            background: rgba(255,51,85,0.06);
+        }
+
+        #dashboardPage { display: none; width: 100%; max-width: 520px; margin: 0 auto; animation: fadeIn 0.4s ease; }
+        @keyframes fadeIn { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(0,255,136,0.08);
+        }
+        .top-bar .title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+        }
+        .top-bar .title span { color: #33ddff; }
+        .profile-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(0,255,136,0.08);
+            border: 1.5px solid rgba(0,255,136,0.25);
+            color: #00ff88;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            user-select: none;
+            text-transform: uppercase;
+        }
+        .profile-icon:hover {
+            background: #00ff88;
+            color: #000;
+            border-color: #00ff88;
+            box-shadow: 0 0 40px rgba(0,255,136,0.2);
+        }
+        .top-bar { position: relative; }
+
+        .profile-dropdown {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 55px;
+            width: 280px;
+            max-height: 80vh;
+            overflow-y: auto;
+            background: #0a100e;
+            border: 1px solid rgba(0,255,136,0.15);
+            padding: 14px;
+            border-radius: 10px;
+            flex-direction: column;
+            gap: 2px;
+            z-index: 20;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 15px 50px rgba(0,0,0,0.9);
+            animation: slideDown 0.25s ease;
+        }
+        .profile-dropdown::-webkit-scrollbar { width: 4px; }
+        .profile-dropdown::-webkit-scrollbar-track { background: rgba(0,255,136,0.05); }
+        .profile-dropdown::-webkit-scrollbar-thumb { background: rgba(0,255,136,0.2); border-radius: 2px; }
+        @keyframes slideDown {
+            0% { opacity: 0; transform: translateY(-12px) scale(0.96); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .profile-dropdown.open { display: flex; }
+        .profile-dropdown .user-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            border-bottom: 1px solid rgba(0,255,136,0.08);
+            padding-bottom: 10px;
+            margin-bottom: 8px;
+        }
+        .profile-dropdown .user-name { font-size: 1rem; font-weight: 600; color: #00ff88; }
+        .profile-dropdown .user-role { font-size: 0.65rem; opacity: 0.35; letter-spacing: 2px; text-transform: uppercase; }
+        .profile-dropdown .dashboard-btn {
+            background: transparent;
+            border: 1px solid rgba(0,255,136,0.06);
+            color: #00ff88;
+            padding: 10px 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            text-align: left;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-radius: 6px;
+            margin: 2px 0;
+            transition: all 0.15s ease;
+            width: 100%;
+        }
+        .profile-dropdown .dashboard-btn:hover {
+            background: rgba(0,255,136,0.1);
+            border-color: rgba(0,255,136,0.2);
+            transform: translateX(4px);
+        }
+        .profile-dropdown .dashboard-btn.red { color: #ff4466; border-color: rgba(255,68,102,0.1); }
+        .profile-dropdown .dashboard-btn.red:hover { background: rgba(255,68,102,0.1); border-color: rgba(255,68,102,0.3); }
+        .profile-dropdown .section-label {
+            font-size: 0.55rem;
+            opacity: 0.3;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            padding: 6px 4px 2px 4px;
+            border-top: 1px solid rgba(0,255,136,0.05);
+            margin-top: 4px;
+        }
+
+        .box {
+            border: 1px solid rgba(0, 255, 136, 0.15);
+            padding: 16px 14px;
+            margin-bottom: 14px;
+            background: #0a100e;
+            border-radius: 10px;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.7);
+            transition: border-color 0.25s;
+        }
+        .box:hover { border-color: rgba(0, 255, 136, 0.25); }
+        .box h2 {
+            font-size: 0.75rem;
+            margin: 0 0 10px 0;
+            color: #00ff88;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0.8;
+            font-weight: 500;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .stat-box {
+            border: 1px solid rgba(0, 255, 136, 0.1);
+            padding: 10px 4px;
+            text-align: center;
+            background: rgba(0, 255, 136, 0.03);
+            border-radius: 8px;
+        }
+        .stat-num { font-size: 1.5rem; font-weight: 700; display: block; line-height: 1.3; color: #00ff88; }
+        .stat-label { font-size: 0.5rem; letter-spacing: 1px; opacity: 0.4; text-transform: uppercase; }
+
+        .btn-vertical {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .btn-vertical .dashboard-btn {
+            width: 100%;
+            margin: 0;
+        }
+
+        .dashboard-btn {
+            background: rgba(0, 255, 136, 0.08);
+            border: 1.5px solid rgba(0, 255, 136, 0.3);
+            color: #00ff88;
+            padding: 12px 14px;
+            cursor: pointer;
+            text-align: center;
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            transition: all 0.15s ease;
+            border-radius: 8px;
+            letter-spacing: 0.5px;
+        }
+        .dashboard-btn:hover {
+            background: #00ff88;
+            color: #000;
+            border-color: #00ff88;
+            box-shadow: 0 0 35px rgba(0, 255, 136, 0.2);
+        }
+        .dashboard-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .dashboard-btn.red { border-color: rgba(255, 51, 85, 0.4); color: #ff3355; }
+        .dashboard-btn.red:hover { background: #ff3355; color: #000; border-color: #ff3355; }
+        .dashboard-btn.blue { border-color: rgba(51, 221, 255, 0.4); color: #33ddff; }
+        .dashboard-btn.blue:hover { background: #33ddff; color: #000; border-color: #33ddff; }
+        .dashboard-btn.orange { border-color: rgba(255, 170, 51, 0.4); color: #ffaa33; }
+        .dashboard-btn.orange:hover { background: #ffaa33; color: #000; border-color: #ffaa33; }
+        .dashboard-btn.green { border-color: rgba(0, 255, 136, 0.4); color: #00ff88; }
+        .dashboard-btn.green:hover { background: #00ff88; color: #000; border-color: #00ff88; }
+
+        input, textarea {
+            width: 100%;
+            background: rgba(0,0,0,0.6);
+            border: 1.5px solid rgba(0, 255, 136, 0.15);
+            color: #00ff88;
+            padding: 10px 12px;
+            margin: 4px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            border-radius: 8px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus, textarea:focus { border-color: rgba(0, 255, 136, 0.5); }
+        input[type="file"] { border: none; padding: 8px 0; background: transparent; }
+        textarea { resize: vertical; min-height: 100px; font-size: 0.8rem; line-height: 1.6; }
+
+        .p-small { font-size: 0.7rem; opacity: 0.4; margin: 4px 0 2px 0; word-break: break-all; }
+
+        .node-list { font-size: 0.8rem; line-height: 2; border-left: 2px solid rgba(0, 255, 136, 0.1); padding-left: 14px; margin: 6px 0 12px 0; }
+        .node-item { display: flex; justify-content: space-between; align-items: center; padding: 2px 0; border-bottom: 1px solid rgba(0,255,136,0.04); }
+        .node-item .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+        .node-item .status-dot.running { background: #00ff88; }
+        .node-item .status-dot.stopped { background: #ff4466; }
+
+        .vps-owner-only { display: none; }
+        .vps-owner-only.show { display: block; }
+
+        .vps-connect-box {
+            border: 1px solid rgba(0,255,136,0.15);
+            padding: 12px;
+            border-radius: 8px;
+            background: rgba(0,0,0,0.3);
+            margin-bottom: 10px;
+        }
+        .vps-connect-box .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .vps-connect-box .status-dot.online { background: #00ff88; }
+        .vps-connect-box .status-dot.offline { background: #ff4466; }
+        .vps-connect-box .status-dot.connecting { background: #ffaa33; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .vps-connect-box .conn-status-text { font-size: 0.8rem; font-weight: 600; }
+        .vps-connect-box .conn-details { font-size: 0.6rem; opacity: 0.5; margin-top: 4px; line-height: 1.6; }
+        .vps-connect-box .conn-details span { display: inline-block; margin-right: 12px; }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(6px);
+            z-index: 999;
+            justify-content: center;
+            align-items: center;
+            animation: fadeIn 0.25s ease;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-box {
+            background: #0a100e;
+            border: 1.5px solid rgba(0,255,136,0.2);
+            border-radius: 12px;
+            padding: 25px 20px;
+            width: 400px;
+            max-width: 92%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+            animation: modalSlide 0.3s ease;
+        }
+        @keyframes modalSlide {
+            0% { opacity: 0; transform: scale(0.95) translateY(12px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .modal-box h3 { color: #00ff88; font-size: 1rem; letter-spacing: 2px; margin-bottom: 14px; text-transform: uppercase; opacity: 0.8; }
+        .modal-box .input-group { margin-bottom: 10px; }
+        .modal-box .input-group label { display: block; font-size: 0.6rem; opacity: 0.4; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px; }
+        .modal-box .input-group input, .modal-box .input-group select {
+            width: 100%;
+            background: rgba(0,0,0,0.6);
+            border: 1.5px solid rgba(0,255,136,0.12);
+            color: #00ff88;
+            padding: 10px 12px;
+            border-radius: 8px;
+            outline: none;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+        }
+        .modal-box .modal-actions { display: flex; gap: 10px; margin-top: 14px; }
+        .modal-box .modal-actions .dashboard-btn { flex: 1; text-align: center; padding: 10px; margin: 0; font-size: 0.7rem; }
+        .modal-box .modal-actions .dashboard-btn.cancel {
+            background: transparent;
+            border-color: rgba(255,68,102,0.2);
+            color: #ff4466;
+        }
+        .modal-box .modal-actions .dashboard-btn.cancel:hover { background: #ff4466; color: #000; }
+
+        .modal-box .terminal-output {
+            background: #050807;
+            border: 1px solid rgba(0,255,136,0.1);
+            border-radius: 6px;
+            padding: 10px;
+            max-height: 250px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.7rem;
+            color: #00ff88;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 6px 0;
+        }
+        .modal-box .terminal-output::-webkit-scrollbar { width: 4px; }
+        .modal-box .terminal-output::-webkit-scrollbar-track { background: rgba(0,255,136,0.05); }
+        .modal-box .terminal-output::-webkit-scrollbar-thumb { background: rgba(0,255,136,0.2); border-radius: 2px; }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            margin: 3px 0;
+            border: 1px solid rgba(0,255,136,0.06);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.2);
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .file-item .file-info { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; flex-wrap: wrap; }
+        .file-item .file-info .name { color: #00ff88; }
+        .file-item .file-info .size { opacity: 0.3; font-size: 0.65rem; }
+        .file-item .file-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+        .file-item .file-actions .btn-sm {
+            padding: 2px 10px;
+            font-size: 0.55rem;
+            border: 1px solid rgba(0,255,136,0.15);
+            border-radius: 4px;
+            background: transparent;
+            color: #00ff88;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            transition: all 0.15s;
+        }
+        .file-item .file-actions .btn-sm:hover { background: #00ff88; color: #000; }
+        .file-item .file-actions .btn-sm.red { color: #ff4466; border-color: rgba(255,68,102,0.2); }
+        .file-item .file-actions .btn-sm.red:hover { background: #ff4466; color: #000; }
+        .file-item .file-actions .btn-sm.orange { color: #ffaa33; border-color: rgba(255,170,51,0.2); }
+        .file-item .file-actions .btn-sm.orange:hover { background: #ffaa33; color: #000; }
+
+        .status-badge {
+            font-size: 0.5rem;
+            padding: 2px 10px;
+            border-radius: 12px;
+            border: 1px solid;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .status-badge.running { color: #00ff88; border-color: rgba(0,255,136,0.3); }
+        .status-badge.stopped { color: #ff4466; border-color: rgba(255,68,102,0.3); }
+        .status-badge.active { color: #00ff88; border-color: rgba(0,255,136,0.3); }
+
+        .list-container { max-height: 350px; overflow-y: auto; }
+        .list-container::-webkit-scrollbar { width: 4px; }
+        .list-container::-webkit-scrollbar-track { background: rgba(0,255,136,0.05); }
+        .list-container::-webkit-scrollbar-thumb { background: rgba(0,255,136,0.2); border-radius: 2px; }
+
+        .settings-row { margin: 8px 0; padding: 6px 0; border-bottom: 1px solid rgba(0,255,136,0.05); }
+        .settings-row label { display: block; font-size: 0.55rem; letter-spacing: 2px; opacity: 0.4; margin-bottom: 3px; text-transform: uppercase; }
+
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin: 6px 0;
+            padding: 6px 4px;
+            border-radius: 6px;
+            border: 1px solid rgba(0,255,136,0.08);
+        }
+        .toggle-switch input[type="checkbox"] {
+            width: 44px;
+            height: 24px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: #1a1f1d;
+            border-radius: 12px;
+            border: 1.5px solid rgba(0,255,136,0.15);
+            position: relative;
+            cursor: pointer;
+            transition: all 0.25s;
+            margin: 0;
+            flex-shrink: 0;
+        }
+        .toggle-switch input[type="checkbox"]:checked { background: #00ff88; border-color: #00ff88; }
+        .toggle-switch input[type="checkbox"]::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            background: #050807;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: all 0.25s;
+        }
+        .toggle-switch input[type="checkbox"]:checked::before { left: 22px; background: #000; }
+        .toggle-label { font-size: 0.75rem; letter-spacing: 1px; opacity: 0.6; }
+
+        .delete-btn-full {
+            width: 100%;
+            padding: 12px;
+            margin: 6px 0;
+            background: rgba(255, 51, 85, 0.1);
+            border: 1.5px solid rgba(255, 51, 85, 0.3);
+            color: #ff3355;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: center;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .delete-btn-full:hover {
+            background: #ff3355;
+            color: #000;
+            border-color: #ff3355;
+            box-shadow: 0 0 35px rgba(255, 51, 85, 0.2);
+        }
+
+        .download-btn-full {
+            width: 100%;
+            padding: 12px;
+            margin: 6px 0;
+            background: rgba(51, 221, 255, 0.1);
+            border: 1.5px solid rgba(51, 221, 255, 0.3);
+            color: #33ddff;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: center;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .download-btn-full:hover {
+            background: #33ddff;
+            color: #000;
+            border-color: #33ddff;
+            box-shadow: 0 0 35px rgba(51, 221, 255, 0.2);
+        }
+
+        .user-clickable {
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .user-clickable:hover {
+            color: #33ddff;
+            text-shadow: 0 0 20px rgba(51,221,255,0.2);
+        }
+
+        @media (max-width: 480px) {
+            .auth-container { width: 95%; padding: 25px 16px; }
+            .auth-container .brand h1 { font-size: 1.2rem; }
+            .stat-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+            .stat-box { padding: 8px 2px; }
+            .stat-num { font-size: 1.2rem; }
+            .dashboard-btn { font-size: 0.65rem; padding: 10px 8px; }
+            .profile-icon { width: 38px; height: 38px; font-size: 0.9rem; }
+            .profile-dropdown { width: 220px; right: 0; }
+            .file-item { flex-wrap: wrap; gap: 4px; }
+            .modal-box { padding: 16px 12px; width: 95%; }
+            .toast { min-width: 200px; padding: 12px 16px; font-size: 0.7rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- TOAST -->
+    <div class="toast" id="toast">
+        <span class="toast-icon" id="toastIcon">⚡</span>
+        <span id="toastMessage">ACCESS GRANTED</span>
+        <div class="toast-sub" id="toastSub">SECURE CONNECTION ESTABLISHED</div>
+    </div>
+
+    <!-- LOADER -->
+    <div id="loader">
+        <div class="loader-ring"></div>
+        <div class="loader-text">⚡ Loading...</div>
+        <div class="loader-progress"><div class="bar" id="loaderBar"></div></div>
+    </div>
+
+    <!-- LOGIN -->
+    <div class="auth-container" id="loginBox">
+        <div class="brand">
+            <h1>🐍 PYTHON <span class="highlight">HOSTING</span></h1>
+            <div class="sub">⚡ secure cloud shell ⚡</div>
+        </div>
+        <div class="divider"></div>
+        <h2>▶ AUTHENTICATION REQUIRED</h2>
+        <div class="input-group">
+            <label>👤 USERNAME</label>
+            <input type="text" id="user" placeholder="Enter Username">
+        </div>
+        <div class="input-group">
+            <label>🔒 PASSWORD</label>
+            <input type="password" id="pass" placeholder="Enter Password">
+        </div>
+        <div class="login-error" id="loginError">❌ Invalid username or password</div>
+        <button class="btn-primary" id="unlock-btn">⚡ UNLOCK DASHBOARD</button>
+        <a href="#" id="dmBuyLink" style="text-decoration:none; display:block; margin-top:8px;">
+            <button class="btn-secondary">💬 DM TO BUY ACCESS</button>
+        </a>
+        <div class="footer-text">
+            <span>🛡</span> UNAUTHORIZED ACCESS PROHIBITED<br>
+            SHADOW SECURE SYSTEMS v2.0
+        </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="dashboardPage">
+        <!-- TOP BAR -->
+        <div class="top-bar">
+            <div class="title">🐍 <span>PYTHON</span> HOSTING</div>
+            <div style="position:relative;">
+                <div class="profile-icon" id="profileIcon">A</div>
+                <div class="profile-dropdown" id="profileDropdown">
+                    <div class="user-info">
+                        <span class="user-name" id="dropdownUsername">👤 admin</span>
+                        <span class="user-role" id="dropdownRole">ROLE: OWNER</span>
+                    </div>
+                    <div class="section-label">👤 ACCOUNT</div>
+                    <button class="dashboard-btn" id="menuChangeUsername">✏️ Change Username</button>
+                    <button class="dashboard-btn" id="menuChangePassword">🔑 Change Password</button>
+                    <div class="section-label" id="adminSectionLabel">📁 ADMIN</div>
+                    <button class="dashboard-btn" id="menuMyFiles">📂 My Files</button>
+                    <button class="dashboard-btn" id="menuMyNodes">🖥 My Nodes</button>
+                    <button class="dashboard-btn" id="menuTerminal">💻 Terminal</button>
+                    <button class="dashboard-btn" id="menuAddUser">➕ Add User</button>
+                    <button class="dashboard-btn" id="menuAllUsers">👥 All Users</button>
+                    <button class="dashboard-btn" id="menuAllFiles">📁 All Files</button>
+                    <div class="section-label" id="ownerSectionLabel">👑 OWNER</div>
+                    <button class="dashboard-btn" id="menuAddAdmin">👑 Add Admin</button>
+                    <button class="dashboard-btn" id="menuAdminList">🛡 Admin List</button>
+                    <button class="dashboard-btn" id="menuPanelSettings">⚙ Panel Settings</button>
+                    <button class="dashboard-btn red" id="menuLogout">🚪 Logout</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- VPS CONNECTION - ONLY OWNER (Shows after login) -->
+        <div class="vps-owner-only" id="vpsConnectionBox">
+            <div class="box">
+                <div class="vps-connect-box">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <span class="status-dot offline" id="vpsStatusDot"></span>
+                            <span class="conn-status-text" id="vpsStatusText">🔴 Disconnected</span>
+                        </div>
+                        <div style="font-size:0.6rem;opacity:0.3;" id="vpsLatency">—</div>
+                    </div>
+                    <div class="conn-details" id="vpsDetails">
+                        <span>🌐 Server: <span id="vpsServerName">—</span></span>
+                        <span>📡 IP: <span id="vpsIP">—</span></span>
+                        <span>🐍 Python: <span id="vpsPython">—</span></span>
+                        <span>💻 CPU: <span id="vpsCPU">—</span> | RAM: <span id="vpsRAM">—</span></span>
+                    </div>
+                </div>
+                <div class="btn-vertical">
+                    <button class="dashboard-btn green" id="vpsConnectBtn">🔗 Connect VPS</button>
+                    <button class="dashboard-btn blue" id="vpsRefreshBtn">🔄 Refresh</button>
+                    <button class="dashboard-btn red" id="vpsDisconnectBtn">❌ Disconnect</button>
+                </div>
+                <p class="p-small" id="vpsStatusMsg">Enter VPS details to connect</p>
+            </div>
+        </div>
+
+        <!-- STATS -->
+        <div class="box">
+            <div class="stat-grid">
+                <div class="stat-box"><span class="stat-num" id="stoppedCount">0</span><div class="stat-label">Stopped</div></div>
+                <div class="stat-box"><span class="stat-num" id="userCount">0</span><div class="stat-label">Users</div></div>
+                <div class="stat-box"><span class="stat-num" id="fileCount">0</span><div class="stat-label">Files</div></div>
+                <div class="stat-box"><span class="stat-num" id="runningCount">0</span><div class="stat-label">Running</div></div>
+            </div>
+            <div class="btn-vertical">
+                <button class="dashboard-btn green" id="dashboardBtn">🏠 Dashboard</button>
+                <button class="dashboard-btn blue" id="keepaliveBtn">♾ Keep Alive</button>
+                <button class="dashboard-btn red" id="logoutBtn">🚪 Logout</button>
+            </div>
+        </div>
+
+        <!-- UPLOAD -->
+        <div class="box">
+            <h2>📤 Upload File</h2>
+            <input type="file" id="fileInput" accept=".py,.js,.zip">
+            <button class="dashboard-btn green" id="uploadBtn">📦 Upload & Deploy</button>
+            <p class="p-small" id="uploadStatus">ready</p>
+        </div>
+
+        <!-- CODE DEPLOY -->
+        <div class="box">
+            <h2>⌨ Deploy Code</h2>
+            <input type="text" id="pyFilename" value="main.py" placeholder="filename.py">
+            <textarea rows="5" id="pyCodeArea" placeholder="Paste your Python code here..."></textarea>
+            <button class="dashboard-btn blue" id="deployBtn">▶ Deploy & Run</button>
+            <p class="p-small" id="deployStatus">ready</p>
+        </div>
+
+        <!-- NODES -->
+        <div class="box">
+            <h2>🖥 Running Nodes</h2>
+            <div class="node-list" id="runningNodesList">
+                <div style="opacity:0.3;text-align:center;padding:10px;">No nodes running</div>
+            </div>
+            <div class="btn-vertical">
+                <button class="dashboard-btn green" id="startAllBtn">▶ Start All</button>
+                <button class="dashboard-btn red" id="stopAllBtn">■ Stop All</button>
+                <button class="dashboard-btn blue" id="restartAllBtn">↻ Restart All</button>
+            </div>
+            <p class="p-small" id="nodeActionStatus">ready</p>
+        </div>
+
+        <!-- MANAGE -->
+        <div class="box">
+            <h2>⚙ Manage</h2>
+            <div class="btn-vertical">
+                <button class="dashboard-btn blue" id="logsBtn">≡ Logs</button>
+                <button class="dashboard-btn green" id="onBtn">☺ 24/7 ON</button>
+                <button class="dashboard-btn orange" id="offBtn">☹ OFF</button>
+                <button class="download-btn-full" id="downloadBtn">⬇ DOWNLOAD</button>
+                <button class="delete-btn-full" id="deleteBtn">🗑 DELETE</button>
+            </div>
+            <p class="p-small" id="manageStatus">ready</p>
+        </div>
+    </div>
+
+    <!-- MODAL -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal-box" id="modalBox">
+            <h3 id="modalTitle">Modal</h3>
+            <div id="modalBody"></div>
+            <div class="modal-actions" id="modalActions">
+                <button class="dashboard-btn cancel" id="modalCancel">Cancel</button>
+                <button class="dashboard-btn" id="modalConfirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- VPS CONNECT MODAL -->
+    <div class="modal-overlay" id="vpsModal">
+        <div class="modal-box" style="width:420px;max-width:95%;">
+            <h3>🌐 Connect to VPS</h3>
+            <div id="vpsModalBody">
+                <div class="input-group">
+                    <label>VPS URL</label>
+                    <input type="text" id="vpsUrlInput" placeholder="http://139.99.121.50:5000">
+                </div>
+                <div class="input-group">
+                    <label>API Key</label>
+                    <input type="password" id="vpsApiKeyInput" placeholder="vps_connect_12345">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="vpsModalCancel">Cancel</button>
+                <button class="dashboard-btn" id="vpsModalConnect">🔗 Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TERMINAL MODAL -->
+    <div class="modal-overlay" id="terminalModal">
+        <div class="modal-box" style="width:460px;max-width:95%;">
+            <h3>💻 Terminal</h3>
+            <div class="terminal-output" id="terminalOutput">$> Welcome to PYTHON HOSTING Terminal</div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+                <input type="text" id="terminalInput" placeholder="Enter command..." style="flex:1;margin:0;padding:8px 10px;font-size:0.7rem;">
+                <button class="dashboard-btn" id="terminalSendBtn" style="padding:8px 16px;margin:0;font-size:0.65rem;width:auto;">▶</button>
+            </div>
+            <div class="btn-vertical" style="margin-top:6px;">
+                <button class="dashboard-btn" id="terminalClearBtn" style="padding:4px 12px;font-size:0.55rem;margin:0;">🗑 Clear</button>
+                <button class="dashboard-btn cancel" id="terminalCloseBtn" style="padding:4px 12px;font-size:0.55rem;margin:0;">✕ Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MY FILES MODAL -->
+    <div class="modal-overlay" id="myFilesModal">
+        <div class="modal-box" style="width:450px;max-width:95%;max-height:85vh;">
+            <h3>📁 My Files</h3>
+            <div class="list-container" id="myFilesListContainer">
+                <div style="opacity:0.3;text-align:center;padding:20px;">No files uploaded</div>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="myFilesCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MY NODES MODAL -->
+    <div class="modal-overlay" id="myNodesModal">
+        <div class="modal-box" style="width:450px;max-width:95%;max-height:85vh;">
+            <h3>🖥 My Nodes</h3>
+            <div class="list-container" id="myNodesListContainer">
+                <div style="opacity:0.3;text-align:center;padding:20px;">No nodes</div>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="myNodesCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ALL USERS MODAL -->
+    <div class="modal-overlay" id="allUsersModal">
+        <div class="modal-box" style="width:450px;max-width:95%;max-height:85vh;">
+            <h3>👥 All Users</h3>
+            <div class="list-container" id="allUsersListContainer">
+                <div style="opacity:0.3;text-align:center;padding:20px;">No users</div>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="allUsersCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ALL FILES MODAL -->
+    <div class="modal-overlay" id="allFilesModal">
+        <div class="modal-box" style="width:450px;max-width:95%;max-height:85vh;">
+            <h3>📁 All Files</h3>
+            <div id="allFilesUserList" style="margin-bottom:10px;"></div>
+            <div class="list-container" id="allFilesListContainer">
+                <div style="opacity:0.3;text-align:center;padding:20px;">Select a user to view files</div>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="allFilesCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD USER MODAL -->
+    <div class="modal-overlay" id="addUserModal">
+        <div class="modal-box" style="width:400px;max-width:95%;">
+            <h3>➕ Add User</h3>
+            <div class="input-group"><label>Username</label><input type="text" id="addUsername" placeholder="Enter username"></div>
+            <div class="input-group"><label>Password</label><input type="text" id="addPassword" placeholder="Enter password" value="password123"></div>
+            <div class="input-group"><label>Plan</label>
+                <select id="addPlan">
+                    <option value="free">Free</option>
+                    <option value="pro">Pro</option>
+                    <option value="enterprise">Enterprise</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="addUserCancelBtn">Cancel</button>
+                <button class="dashboard-btn" id="addUserConfirmBtn">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD ADMIN MODAL -->
+    <div class="modal-overlay" id="addAdminModal">
+        <div class="modal-box" style="width:400px;max-width:95%;">
+            <h3>👑 Add Admin</h3>
+            <div class="input-group"><label>Username</label><input type="text" id="addAdminUsername" placeholder="Enter username"></div>
+            <div class="input-group"><label>Password</label><input type="text" id="addAdminPassword" placeholder="Enter password" value="admin123"></div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="addAdminCancelBtn">Cancel</button>
+                <button class="dashboard-btn" id="addAdminConfirmBtn">Create Admin</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADMIN LIST MODAL -->
+    <div class="modal-overlay" id="adminListModal">
+        <div class="modal-box" style="width:450px;max-width:95%;max-height:85vh;">
+            <h3>🛡 Admin List</h3>
+            <div class="list-container" id="adminListContainer">
+                <div style="opacity:0.3;text-align:center;padding:20px;">No admins</div>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="adminListCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-box" style="width:400px;max-width:95%;">
+            <h3>⚙ Panel Settings</h3>
+            <div class="settings-row">
+                <label>Site Name</label>
+                <input type="text" id="settingsSiteName" value="PYTHON HOSTING" maxlength="30">
+            </div>
+            <div class="settings-row">
+                <label>Telegram Username</label>
+                <input type="text" id="settingsTelegram" placeholder="hostingpanel" value="hostingpanel">
+            </div>
+            <div class="settings-row">
+                <div class="toggle-switch">
+                    <input type="checkbox" id="settingsMaintenance">
+                    <span class="toggle-label">Maintenance Mode</span>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="dashboard-btn cancel" id="settingsCancelBtn">Cancel</button>
+                <button class="dashboard-btn" id="settingsSaveBtn">💾 Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ================================================================
+        // PYTHON HOSTING - FIXED: BACKEND LOGIN SUPPORT
+        // ================================================================
+        (function() {
+            "use strict";
+
+            // ----- STATE -----
+            let currentUser = null;
+            let currentRole = null;
+            let isLoggedIn = false;
+            let isOwner = false;
+            let isAdmin = false;
+            let isVPSConnected = false;
+            let vpsUrl = localStorage.getItem('vpsUrl') || '';
+            let vpsApiKey = localStorage.getItem('vpsApiKey') || '';
+            let vpsServerInfo = null;
+            let uptimeInterval = null;
+            let statInterval = null;
+            let files = [];
+            let nodes = [];
+            let users = [];
+            let allFiles = [];
+            let settings = { siteName: 'PYTHON HOSTING', telegram: 'hostingpanel', maintenance: false };
+
+            // ----- DOM REFS -----
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toastMessage');
+            const toastSub = document.getElementById('toastSub');
+            const toastIcon = document.getElementById('toastIcon');
+            const loader = document.getElementById('loader');
+            const loaderBar = document.getElementById('loaderBar');
+            const loginBox = document.getElementById('loginBox');
+            const dashboardPage = document.getElementById('dashboardPage');
+            const userInput = document.getElementById('user');
+            const passInput = document.getElementById('pass');
+            const unlockBtn = document.getElementById('unlock-btn');
+            const loginError = document.getElementById('loginError');
+            const profileIcon = document.getElementById('profileIcon');
+            const profileDropdown = document.getElementById('profileDropdown');
+
+            // ----- LOADER -----
+            function updateLoader(progress) {
+                loaderBar.style.width = Math.min(progress, 100) + '%';
+            }
+
+            function hideLoader() {
+                loader.style.opacity = '0';
+                setTimeout(function() { loader.style.display = 'none'; }, 400);
+            }
+
+            // ----- TOAST -----
+            function showToast(message, isError, subText) {
+                toast.classList.remove('error', 'show');
+                if (isError) {
+                    toast.classList.add('error');
+                    toastIcon.textContent = '⛔';
+                    toastMsg.textContent = message || 'ERROR';
+                    toastSub.textContent = subText || 'Something went wrong';
+                } else {
+                    toastIcon.textContent = '⚡';
+                    toastMsg.textContent = message || 'SUCCESS';
+                    toastSub.textContent = subText || 'Operation completed';
+                }
+                toast.classList.add('show');
+                clearTimeout(toast._timeout);
+                toast._timeout = setTimeout(function() { toast.classList.remove('show'); }, 2500);
+            }
+
+            // ----- VPS API (Only after VPS Connect) -----
+            async function vpsApiCall(endpoint, method, body) {
+                if (!vpsUrl) {
+                    throw new Error('VPS not connected');
+                }
+                
+                let headers = {
+                    'x-api-key': vpsApiKey,
+                    'x-username': currentUser ? currentUser.username : 'admin'
+                };
+                let opts = { method: method || 'GET', mode: 'cors', headers: headers };
+                
+                if (body) {
+                    headers['Content-Type'] = 'application/json';
+                    opts.body = JSON.stringify(body);
+                }
+                
+                try {
+                    const res = await fetch(vpsUrl + endpoint, opts);
+                    const data = await res.json();
+                    if (!res.ok) {
+                        throw new Error(data.error || 'API request failed');
+                    }
+                    return data;
+                } catch (e) {
+                    if (e.message.includes('Failed to fetch')) {
+                        throw new Error('Cannot connect to VPS');
+                    }
+                    throw e;
+                }
+            }
+
+            async function vpsApiUpload(endpoint, formData) {
+                if (!vpsUrl) throw new Error('VPS not connected');
+                
+                let headers = {
+                    'x-api-key': vpsApiKey,
+                    'x-username': currentUser ? currentUser.username : 'admin'
+                };
+                
+                const res = await fetch(vpsUrl + endpoint, {
+                    method: 'POST',
+                    headers: headers,
+                    body: formData,
+                    mode: 'cors'
+                });
+                
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Upload failed');
+                return data;
+            }
+
+            // ----- CHECK VPS STATUS -----
+            async function checkVPSStatus() {
+                try {
+                    const response = await fetch(vpsUrl + '/api/connect/status', {
+                        headers: {
+                            'x-username': currentUser ? currentUser.username : 'admin'
+                        }
+                    });
+                    const data = await response.json();
+                    return data;
+                } catch (e) {
+                    return { connected: false };
+                }
+            }
+
+            // ----- VPS CONNECTION -----
+            async function connectToVPS(url, apiKey) {
+                try {
+                    vpsUrl = url;
+                    vpsApiKey = apiKey;
+                    localStorage.setItem('vpsUrl', url);
+                    localStorage.setItem('vpsApiKey', apiKey);
+                    
+                    updateVPSStatus('connecting', '🟡 Connecting...');
+                    
+                    const data = await vpsApiCall('/api/connect');
+                    
+                    if (data.status === 'connected') {
+                        isVPSConnected = true;
+                        vpsServerInfo = data.server;
+                        
+                        if (isOwner) {
+                            document.getElementById('vpsConnectionBox').classList.add('show');
+                        }
+                        
+                        updateVPSStatus('online', '🟢 Connected');
+                        
+                        if (data.server) {
+                            document.getElementById('vpsServerName').textContent = data.server.name || '—';
+                            document.getElementById('vpsIP').textContent = data.server.ip || '—';
+                            document.getElementById('vpsPython').textContent = data.server.python || '—';
+                            document.getElementById('vpsCPU').textContent = data.server.cpu || '—';
+                            document.getElementById('vpsRAM').textContent = data.server.ram || '—';
+                        }
+                        document.getElementById('vpsStatusMsg').textContent = '✅ Connected';
+                        
+                        if (data.already_connected) {
+                            showToast('🔄 VPS Already Connected', false);
+                        } else {
+                            showToast('✅ VPS Connected!', false);
+                        }
+                        
+                        await fetchAllData();
+                        closeVPSModal();
+                        return true;
+                    } else {
+                        throw new Error('Connection failed');
+                    }
+                } catch (e) {
+                    isVPSConnected = false;
+                    updateVPSStatus('offline', '🔴 Disconnected');
+                    document.getElementById('vpsStatusMsg').textContent = '❌ ' + e.message;
+                    showToast('❌ Connection failed', true, e.message);
+                    return false;
+                }
+            }
+
+            function updateVPSStatus(status, text) {
+                const dot = document.getElementById('vpsStatusDot');
+                const statusText = document.getElementById('vpsStatusText');
+                dot.className = 'status-dot ' + status;
+                statusText.textContent = text;
+            }
+
+            async function disconnectVPS() {
+                try {
+                    await vpsApiCall('/api/connect/disconnect', 'POST');
+                } catch(e) {}
+                
+                isVPSConnected = false;
+                vpsServerInfo = null;
+                vpsUrl = '';
+                vpsApiKey = '';
+                localStorage.removeItem('vpsUrl');
+                localStorage.removeItem('vpsApiKey');
+                updateVPSStatus('offline', '🔴 Disconnected');
+                document.getElementById('vpsStatusMsg').textContent = 'Enter VPS details';
+                document.getElementById('vpsServerName').textContent = '—';
+                document.getElementById('vpsIP').textContent = '—';
+                document.getElementById('vpsPython').textContent = '—';
+                document.getElementById('vpsCPU').textContent = '—';
+                document.getElementById('vpsRAM').textContent = '—';
+                showToast('🔌 Disconnected', false);
+            }
+
+            // ----- FETCH DATA (Only after VPS Connect) -----
+            async function fetchAllData() {
+                if (!isVPSConnected) return;
+                try {
+                    const stats = await vpsApiCall('/api/stats');
+                    document.getElementById('stoppedCount').textContent = stats.stopped || 0;
+                    document.getElementById('userCount').textContent = stats.users || 0;
+                    document.getElementById('fileCount').textContent = stats.files || 0;
+                    document.getElementById('runningCount').textContent = stats.running || 0;
+                    
+                    if (isOwner && stats.vps_connected !== undefined) {
+                        isVPSConnected = stats.vps_connected;
+                        if (isVPSConnected) {
+                            updateVPSStatus('online', '🟢 Connected');
+                            document.getElementById('vpsStatusMsg').textContent = '✅ Connected';
+                        }
+                    }
+
+                    try {
+                        const fileData = await vpsApiCall('/api/files');
+                        files = fileData.files || [];
+                    } catch(e) {}
+
+                    try {
+                        const nodeData = await vpsApiCall('/api/nodes');
+                        nodes = nodeData.nodes || [];
+                    } catch(e) {}
+
+                    try {
+                        const userData = await vpsApiCall('/api/admin/users');
+                        users = userData.users || [];
+                    } catch(e) {}
+
+                    try {
+                        if (isAdmin) {
+                            const allFilesData = await vpsApiCall('/api/admin/all-files');
+                            allFiles = allFilesData.files || [];
+                        }
+                    } catch(e) {}
+
+                    try {
+                        const settingsData = await vpsApiCall('/api/settings');
+                        settings = settingsData || settings;
+                        document.getElementById('settingsSiteName').value = settings.siteName || 'PYTHON HOSTING';
+                        document.getElementById('settingsTelegram').value = settings.telegram || 'hostingpanel';
+                        document.getElementById('settingsMaintenance').checked = settings.maintenance === 'true';
+                        document.getElementById('dmBuyLink').href = 'https://t.me/' + (settings.telegram || 'hostingpanel');
+                    } catch(e) {}
+
+                    updateRunningNodes();
+                    updateUI();
+                } catch (e) {
+                    console.error('Error fetching data:', e);
+                }
+            }
+
+            // ----- UPDATE UI -----
+            function updateUI() {
+                if (!currentUser) return;
+                document.getElementById('dropdownUsername').textContent = '👤 ' + currentUser.username;
+                document.getElementById('dropdownRole').textContent = 'ROLE: ' + (currentUser.role || 'USER').toUpperCase();
+                profileIcon.textContent = currentUser.username.charAt(0).toUpperCase();
+                document.title = settings.siteName + ' · Dashboard';
+                
+                const isAdminOrOwner = (currentUser.role === 'admin' || currentUser.role === 'owner');
+                const isOwnerOnly = (currentUser.role === 'owner');
+                
+                document.getElementById('menuMyFiles').style.display = 'block';
+                document.getElementById('menuMyNodes').style.display = 'block';
+                document.getElementById('menuTerminal').style.display = isAdminOrOwner ? 'block' : 'none';
+                document.getElementById('menuAddUser').style.display = isAdminOrOwner ? 'block' : 'none';
+                document.getElementById('menuAllUsers').style.display = isAdminOrOwner ? 'block' : 'none';
+                document.getElementById('menuAllFiles').style.display = isAdminOrOwner ? 'block' : 'none';
+                document.getElementById('adminSectionLabel').style.display = isAdminOrOwner ? 'block' : 'none';
+                document.getElementById('menuAddAdmin').style.display = isOwnerOnly ? 'block' : 'none';
+                document.getElementById('menuAdminList').style.display = isOwnerOnly ? 'block' : 'none';
+                document.getElementById('menuPanelSettings').style.display = isAdminOrOwner ? 'block' : 'none';
+                document.getElementById('ownerSectionLabel').style.display = isOwnerOnly ? 'block' : 'none';
+                
+                if (isOwnerOnly) {
+                    document.getElementById('vpsConnectionBox').classList.add('show');
+                } else {
+                    document.getElementById('vpsConnectionBox').classList.remove('show');
+                }
+            }
+
+            function updateRunningNodes() {
+                const container = document.getElementById('runningNodesList');
+                const running = nodes.filter(n => n.status === 'running');
+                
+                if (running.length === 0) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:10px;">No nodes running</div>';
+                    return;
+                }
+                
+                let html = '';
+                running.forEach(n => {
+                    html += `<div class="node-item">
+                        <span><span class="status-dot running"></span> ${n.name}</span>
+                        <span style="opacity:0.4;font-size:0.7rem;">PID: ${n.pid}</span>
+                    </div>`;
+                });
+                container.innerHTML = html;
+            }
+
+            // ----- MODAL HELPERS -----
+            function showModal(modalId) {
+                document.getElementById(modalId).classList.add('active');
+            }
+
+            function closeModal(modalId) {
+                document.getElementById(modalId).classList.remove('active');
+            }
+
+            function showCustomModal(title, bodyHTML, confirmText, confirmCallback, cancelText) {
+                const overlay = document.getElementById('modalOverlay');
+                const titleEl = document.getElementById('modalTitle');
+                const bodyEl = document.getElementById('modalBody');
+                const confirmBtn = document.getElementById('modalConfirm');
+                const cancelBtn = document.getElementById('modalCancel');
+                
+                titleEl.textContent = title;
+                bodyEl.innerHTML = bodyHTML;
+                confirmBtn.textContent = confirmText || 'Confirm';
+                cancelBtn.textContent = cancelText || 'Cancel';
+                overlay.classList.add('active');
+                
+                confirmBtn.onclick = function() {
+                    if (confirmCallback) confirmCallback();
+                    else closeModal('modalOverlay');
+                };
+                cancelBtn.onclick = function() { closeModal('modalOverlay'); };
+                overlay.onclick = function(e) {
+                    if (e.target === overlay) closeModal('modalOverlay');
+                };
+            }
+
+            // ----- MODALS -----
+            function openVPSModal() {
+                document.getElementById('vpsUrlInput').value = vpsUrl;
+                document.getElementById('vpsApiKeyInput').value = vpsApiKey;
+                showModal('vpsModal');
+            }
+
+            function closeVPSModal() {
+                closeModal('vpsModal');
+            }
+
+            function openTerminal() {
+                showModal('terminalModal');
+                document.getElementById('terminalInput').focus();
+            }
+
+            function openMyFiles() {
+                renderFiles();
+                showModal('myFilesModal');
+            }
+
+            function openMyNodes() {
+                renderNodes();
+                showModal('myNodesModal');
+            }
+
+            function openAllUsers() {
+                renderUsers();
+                showModal('allUsersModal');
+            }
+
+            function openAllFiles() {
+                renderAllFiles();
+                showModal('allFilesModal');
+            }
+
+            function openAddUser() {
+                document.getElementById('addUsername').value = '';
+                document.getElementById('addPassword').value = 'password123';
+                showModal('addUserModal');
+            }
+
+            function openAddAdmin() {
+                document.getElementById('addAdminUsername').value = '';
+                document.getElementById('addAdminPassword').value = 'admin123';
+                showModal('addAdminModal');
+            }
+
+            function openAdminList() {
+                renderAdminList();
+                showModal('adminListModal');
+            }
+
+            function openSettings() {
+                document.getElementById('settingsSiteName').value = settings.siteName || 'PYTHON HOSTING';
+                document.getElementById('settingsTelegram').value = settings.telegram || 'hostingpanel';
+                document.getElementById('settingsMaintenance').checked = settings.maintenance === 'true';
+                showModal('settingsModal');
+            }
+
+            // ----- RENDER FUNCTIONS -----
+            function renderFiles() {
+                const container = document.getElementById('myFilesListContainer');
+                if (!isVPSConnected) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">Connect to VPS first</div>';
+                    return;
+                }
+                
+                if (files.length === 0) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">No files uploaded</div>';
+                    return;
+                }
+                
+                let html = '';
+                files.forEach(f => {
+                    const isRunning = nodes.some(n => n.file_id === f.id && n.status === 'running');
+                    const statusClass = isRunning ? 'running' : 'stopped';
+                    const statusText = isRunning ? 'Running' : 'Stopped';
+                    
+                    html += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <span class="name">${f.filename || f.name}</span>
+                                <span class="size">${f.size || '—'}</span>
+                                <span class="status-badge ${statusClass}">${statusText}</span>
+                            </div>
+                            <div class="file-actions">
+                                ${!isRunning ? `<button class="btn-sm" onclick="window.runFile(${f.id})">▶ Start</button>` : ''}
+                                ${isRunning ? `<button class="btn-sm orange" onclick="window.stopFile(${f.id})">■ Stop</button>` : ''}
+                                <button class="btn-sm" onclick="window.downloadFile(${f.id})">⬇</button>
+                                <button class="btn-sm red" onclick="window.deleteFile(${f.id})">🗑</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            function renderNodes() {
+                const container = document.getElementById('myNodesListContainer');
+                if (!isVPSConnected) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">Connect to VPS first</div>';
+                    return;
+                }
+                
+                if (nodes.length === 0) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">No nodes</div>';
+                    return;
+                }
+                
+                let html = '';
+                nodes.forEach(n => {
+                    const statusClass = n.status === 'running' ? 'running' : 'stopped';
+                    html += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <span class="name">${n.name}</span>
+                                <span style="opacity:0.3;font-size:0.65rem;">PID: ${n.pid || '—'}</span>
+                                <span class="status-badge ${statusClass}">${n.status}</span>
+                            </div>
+                            <div class="file-actions">
+                                ${n.status === 'stopped' ? `<button class="btn-sm" onclick="window.startNode(${n.id})">▶</button>` : ''}
+                                ${n.status === 'running' ? `<button class="btn-sm orange" onclick="window.stopNode(${n.id})">■</button>` : ''}
+                                <button class="btn-sm" onclick="window.viewNodeLogs(${n.id})">📜</button>
+                                <button class="btn-sm red" onclick="window.deleteNode(${n.id})">🗑</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            function renderUsers() {
+                const container = document.getElementById('allUsersListContainer');
+                if (!isVPSConnected) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">Connect to VPS first</div>';
+                    return;
+                }
+                
+                if (users.length === 0) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">No users</div>';
+                    return;
+                }
+                
+                let html = '';
+                users.forEach(u => {
+                    const isOwnerUser = u.role === 'owner';
+                    html += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <span class="name">${u.username}</span>
+                                <span style="opacity:0.3;font-size:0.65rem;">${u.role}</span>
+                                <span style="opacity:0.3;font-size:0.65rem;">${u.plan || 'free'}</span>
+                                <span style="opacity:0.5;font-size:0.65rem;">🔒 ${u.password}</span>
+                                <span class="status-badge ${u.status === 'active' ? 'running' : 'stopped'}">${u.status}</span>
+                            </div>
+                            <div class="file-actions">
+                                ${!isOwnerUser ? `<button class="btn-sm red" onclick="window.deleteUser('${u.username}')">🗑</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            function renderAllFiles() {
+                const container = document.getElementById('allFilesListContainer');
+                if (!isVPSConnected) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">Connect to VPS first</div>';
+                    return;
+                }
+                
+                if (allFiles.length === 0) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">No files found</div>';
+                    return;
+                }
+                
+                let html = `<div style="margin-bottom:8px;opacity:0.5;font-size:0.7rem;">📁 All Files (${allFiles.length})</div>`;
+                allFiles.forEach(f => {
+                    const isRunning = nodes.some(n => n.file_id === f.id && n.status === 'running');
+                    const statusClass = isRunning ? 'running' : 'stopped';
+                    const statusText = isRunning ? 'Running' : 'Stopped';
+                    
+                    html += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <span class="name">${f.filename || f.name}</span>
+                                <span style="opacity:0.3;font-size:0.65rem;">👤 ${f.username || 'unknown'}</span>
+                                <span class="size">${f.size || '—'}</span>
+                                <span class="status-badge ${statusClass}">${statusText}</span>
+                            </div>
+                            <div class="file-actions">
+                                ${!isRunning ? `<button class="btn-sm" onclick="window.adminRunFile(${f.id})">▶ Start</button>` : ''}
+                                ${isRunning ? `<button class="btn-sm orange" onclick="window.adminStopFile(${f.id})">■ Stop</button>` : ''}
+                                <button class="btn-sm" onclick="window.adminDownloadFile(${f.id})">⬇</button>
+                                <button class="btn-sm red" onclick="window.adminDeleteFile(${f.id})">🗑</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            function renderAdminList() {
+                const container = document.getElementById('adminListContainer');
+                if (!isVPSConnected) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">Connect to VPS first</div>';
+                    return;
+                }
+                
+                const admins = users.filter(u => u.role === 'admin');
+                if (admins.length === 0) {
+                    container.innerHTML = '<div style="opacity:0.3;text-align:center;padding:20px;">No admins</div>';
+                    return;
+                }
+                
+                let html = '';
+                admins.forEach(a => {
+                    html += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <span class="name">${a.username}</span>
+                                <span style="opacity:0.3;font-size:0.65rem;">${a.role}</span>
+                                <span style="opacity:0.5;font-size:0.65rem;">🔒 ${a.password}</span>
+                            </div>
+                            <div class="file-actions">
+                                <button class="btn-sm red" onclick="window.deleteAdmin('${a.username}')">🗑</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            // ============================================================
+            // GLOBAL FUNCTIONS
+            // ============================================================
+            
+            // ----- FILE OPERATIONS -----
+            window.runFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall(`/api/files/run/${fileId}`, 'POST');
+                    showToast('▶ Started', false);
+                    fetchAllData();
+                    renderFiles();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.stopFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall(`/api/files/stop/${fileId}`, 'POST');
+                    showToast('■ Stopped', false);
+                    fetchAllData();
+                    renderFiles();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.downloadFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    const response = await fetch(vpsUrl + `/api/files/download/${fileId}`, {
+                        headers: {
+                            'x-api-key': vpsApiKey,
+                            'x-username': currentUser ? currentUser.username : 'admin'
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        const data = await response.json();
+                        throw new Error(data.error || 'Download failed');
+                    }
+                    
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = 'download';
+                    if (contentDisposition) {
+                        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+                        if (match) filename = match[1];
+                    }
+                    
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    
+                    showToast('⬇ Download started', false);
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.deleteFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                showCustomModal('🗑 Delete File', 
+                    '<p style="opacity:0.6;text-align:center;">Are you sure you want to delete this file from VPS?<br>This action cannot be undone.</p>',
+                    'YES, DELETE', async function() {
+                        try {
+                            await vpsApiCall(`/api/files/delete/${fileId}`, 'DELETE');
+                            showToast('🗑 Deleted from VPS', false);
+                            closeModal('modalOverlay');
+                            fetchAllData();
+                            renderFiles();
+                        } catch (e) {
+                            showToast('Error: ' + e.message, true);
+                        }
+                    }, 'NO');
+            };
+
+            // ----- ADMIN FILE OPERATIONS -----
+            window.adminRunFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall(`/api/files/run/${fileId}`, 'POST');
+                    showToast('▶ Started', false);
+                    fetchAllData();
+                    renderAllFiles();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.adminStopFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall(`/api/files/stop/${fileId}`, 'POST');
+                    showToast('■ Stopped', false);
+                    fetchAllData();
+                    renderAllFiles();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.adminDownloadFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    const response = await fetch(vpsUrl + `/api/admin/download/${fileId}`, {
+                        headers: {
+                            'x-api-key': vpsApiKey,
+                            'x-username': currentUser ? currentUser.username : 'admin'
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        const data = await response.json();
+                        throw new Error(data.error || 'Download failed');
+                    }
+                    
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = 'download';
+                    if (contentDisposition) {
+                        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+                        if (match) filename = match[1];
+                    }
+                    
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    
+                    showToast('⬇ Download started', false);
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.adminDeleteFile = async function(fileId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                showCustomModal('🗑 Delete File from VPS', 
+                    '<p style="opacity:0.6;text-align:center;">Delete this file from VPS?<br>This action cannot be undone.</p>',
+                    'YES, DELETE', async function() {
+                        try {
+                            await vpsApiCall(`/api/admin/delete/${fileId}`, 'DELETE');
+                            showToast('🗑 Deleted from VPS', false);
+                            closeModal('modalOverlay');
+                            fetchAllData();
+                            renderAllFiles();
+                        } catch (e) {
+                            showToast('Error: ' + e.message, true);
+                        }
+                    }, 'NO');
+            };
+
+            // ----- NODE OPERATIONS -----
+            window.startNode = async function(nodeId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall(`/api/nodes/start/${nodeId}`, 'POST');
+                    showToast('▶ Started', false);
+                    fetchAllData();
+                    renderNodes();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.stopNode = async function(nodeId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall(`/api/nodes/stop/${nodeId}`, 'POST');
+                    showToast('■ Stopped', false);
+                    fetchAllData();
+                    renderNodes();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            window.deleteNode = async function(nodeId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                showCustomModal('🗑 Delete Node', 
+                    '<p style="opacity:0.6;text-align:center;">Delete this node?<br>This action cannot be undone.</p>',
+                    'YES, DELETE', async function() {
+                        try {
+                            await vpsApiCall(`/api/nodes/delete/${nodeId}`, 'DELETE');
+                            showToast('🗑 Deleted', false);
+                            closeModal('modalOverlay');
+                            fetchAllData();
+                            renderNodes();
+                        } catch (e) {
+                            showToast('Error: ' + e.message, true);
+                        }
+                    }, 'NO');
+            };
+
+            window.viewNodeLogs = async function(nodeId) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    const data = await vpsApiCall(`/api/nodes/logs/${nodeId}`, 'GET');
+                    showCustomModal('📜 Node Logs',
+                        `<div style="background:#050807;border:1px solid rgba(0,255,136,0.1);border-radius:6px;padding:10px;max-height:300px;overflow-y:auto;font-family:'Courier New',monospace;font-size:0.7rem;color:#00ff88;white-space:pre-wrap;word-break:break-all;">${data.logs || 'No logs'}</div>`,
+                        'Close', function() { closeModal('modalOverlay'); });
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            };
+
+            // ----- USER OPERATIONS -----
+            window.deleteUser = async function(username) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                showCustomModal('🗑 Delete User', 
+                    `<p style="opacity:0.6;text-align:center;">Delete user "${username}"?<br>All files and nodes will be deleted.</p>`,
+                    'YES, DELETE', async function() {
+                        try {
+                            await vpsApiCall(`/api/admin/users/${username}`, 'DELETE');
+                            showToast('🗑 Deleted ' + username, false);
+                            closeModal('modalOverlay');
+                            fetchAllData();
+                            renderUsers();
+                        } catch (e) {
+                            showToast('Error: ' + e.message, true);
+                        }
+                    }, 'NO');
+            };
+
+            window.deleteAdmin = async function(username) {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                if (!isOwner) { showToast('Only Owner can delete admins', true); return; }
+                showCustomModal('🗑 Remove Admin', 
+                    `<p style="opacity:0.6;text-align:center;">Remove admin "${username}"?<br>They will become a normal user.</p>`,
+                    'YES, REMOVE', async function() {
+                        try {
+                            await vpsApiCall(`/api/admin/users/${username}`, 'DELETE');
+                            showToast('🗑 Removed ' + username, false);
+                            closeModal('modalOverlay');
+                            fetchAllData();
+                            renderAdminList();
+                            renderUsers();
+                        } catch (e) {
+                            showToast('Error: ' + e.message, true);
+                        }
+                    }, 'NO');
+            };
+
+            // ----- DOWNLOAD / DELETE MODALS -----
+            function openDownloadModal() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                if (files.length === 0) { showToast('No files to download', true); return; }
+                
+                let listHtml = '<div style="margin-bottom:10px;">Select file to download from VPS:</div>';
+                files.forEach(f => {
+                    listHtml += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <span class="name">${f.filename || f.name}</span>
+                                <span class="size">${f.size || '—'}</span>
+                            </div>
+                            <div class="file-actions">
+                                <button class="btn-sm" onclick="window.downloadFile(${f.id})">⬇ Download</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                showCustomModal('⬇ Download File', listHtml, 'Close', function() { closeModal('modalOverlay'); });
+            }
+
+            function openDeleteModal() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                if (files.length === 0) { showToast('No files to delete', true); return; }
+                
+                let listHtml = '<div style="margin-bottom:10px;">Select files to delete from VPS:</div>';
+                files.forEach(f => {
+                    listHtml += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <input type="checkbox" class="delete-checkbox" value="${f.id}" style="width:18px;height:18px;accent-color:#ff4466;">
+                                <span class="name">${f.filename || f.name}</span>
+                                <span class="size">${f.size || '—'}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+                listHtml += `
+                    <div style="margin-top:10px;">
+                        <button class="dashboard-btn" id="selectAllDelete" style="padding:6px;font-size:0.6rem;margin:0;">✅ Select All</button>
+                        <button class="dashboard-btn red" id="confirmDeleteSelected" style="padding:6px;font-size:0.6rem;margin:0;margin-top:6px;">🗑 Delete Selected from VPS</button>
+                    </div>
+                `;
+                
+                showCustomModal('🗑 Delete Files from VPS', listHtml, 'Close', function() { closeModal('modalOverlay'); });
+                
+                setTimeout(() => {
+                    const selectAllBtn = document.getElementById('selectAllDelete');
+                    if (selectAllBtn) {
+                        selectAllBtn.addEventListener('click', function() {
+                            const checkboxes = document.querySelectorAll('.delete-checkbox');
+                            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                            checkboxes.forEach(cb => cb.checked = !allChecked);
+                        });
+                    }
+                    
+                    const confirmBtn = document.getElementById('confirmDeleteSelected');
+                    if (confirmBtn) {
+                        confirmBtn.addEventListener('click', async function() {
+                            const checked = document.querySelectorAll('.delete-checkbox:checked');
+                            if (checked.length === 0) { showToast('Select files to delete', true); return; }
+                            
+                            showCustomModal('🗑 Delete Files from VPS', 
+                                `<p style="opacity:0.6;text-align:center;">Delete ${checked.length} file(s) from VPS?<br>This action cannot be undone.</p>`,
+                                'YES, DELETE', async function() {
+                                    const ids = Array.from(checked).map(cb => parseInt(cb.value));
+                                    let deleted = 0;
+                                    for (const id of ids) {
+                                        try {
+                                            await vpsApiCall(`/api/files/delete/${id}`, 'DELETE');
+                                            deleted++;
+                                        } catch(e) {}
+                                    }
+                                    showToast(`🗑 Deleted ${deleted} files from VPS`, false);
+                                    closeModal('modalOverlay');
+                                    fetchAllData();
+                                    renderFiles();
+                                }, 'NO');
+                        });
+                    }
+                }, 100);
+            }
+
+            // ============================================================
+            // LOGIN - FIXED: BACKEND API CALL
+            // ============================================================
+
+            async function performLogin(username, password) {
+                try {
+                    // ✅ VPS se user verify karo
+                    if (vpsUrl) {
+                        const response = await fetch(vpsUrl + '/api/login', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-api-key': vpsApiKey || 'vps_connect_12345'
+                            },
+                            body: JSON.stringify({ username, password })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            const user = data.user;
+                            currentUser = {
+                                username: user.username,
+                                role: user.role,
+                                plan: user.plan,
+                                id: user.id
+                            };
+                            currentRole = user.role;
+                            isOwner = (user.role === 'owner');
+                            isAdmin = (user.role === 'admin' || user.role === 'owner');
+                            isLoggedIn = true;
+                            localStorage.setItem('loggedInUser', JSON.stringify(currentUser));
+                            showToast('⚡ ACCESS GRANTED', false, 'Welcome ' + user.username);
+                            return true;
+                        } else {
+                            loginError.textContent = '❌ ' + (data.error || 'Invalid credentials');
+                            loginError.classList.add('show');
+                            loginBox.classList.add('shake');
+                            setTimeout(() => {
+                                loginBox.classList.remove('shake');
+                                loginError.classList.remove('show');
+                            }, 3000);
+                            return false;
+                        }
+                    }
+                    
+                    // ⚠️ FALLBACK: Agar VPS connect nahi hai toh local users check karo
+                    const localUsers = [
+                        { username: 'admin', password: 'admin', role: 'owner' },
+                    ];
+                    
+                    const user = localUsers.find(u => u.username === username && u.password === password);
+                    if (!user) {
+                        loginError.textContent = '❌ Invalid username or password';
+                        loginError.classList.add('show');
+                        loginBox.classList.add('shake');
+                        setTimeout(() => {
+                            loginBox.classList.remove('shake');
+                            loginError.classList.remove('show');
+                        }, 3000);
+                        return false;
+                    }
+                    
+                    currentUser = user;
+                    currentRole = user.role;
+                    isOwner = (user.role === 'owner');
+                    isAdmin = (user.role === 'admin' || user.role === 'owner');
+                    isLoggedIn = true;
+                    localStorage.setItem('loggedInUser', JSON.stringify(user));
+                    showToast('⚡ ACCESS GRANTED (LOCAL)', false, 'Welcome ' + user.username);
+                    return true;
+                    
+                } catch (e) {
+                    loginError.textContent = '❌ Connection error: ' + e.message;
+                    loginError.classList.add('show');
+                    setTimeout(() => loginError.classList.remove('show'), 3000);
+                    return false;
+                }
+            }
+
+            function initDashboard() {
+                loginBox.classList.add('hidden');
+                dashboardPage.style.display = 'block';
+                updateUI();
+                
+                if (uptimeInterval) clearInterval(uptimeInterval);
+                uptimeInterval = setInterval(() => {}, 1000);
+                
+                if (statInterval) clearInterval(statInterval);
+                statInterval = setInterval(() => {
+                    if (isVPSConnected) fetchAllData();
+                }, 15000);
+                
+                document.title = settings.siteName + ' · Dashboard';
+                
+                // Check if VPS was already connected
+                if (isOwner && vpsUrl && vpsApiKey) {
+                    checkVPSStatus().then(status => {
+                        if (status.connected) {
+                            isVPSConnected = true;
+                            vpsServerInfo = status.server;
+                            updateVPSStatus('online', '🟢 Connected');
+                            document.getElementById('vpsStatusMsg').textContent = '✅ Connected';
+                            if (status.server) {
+                                document.getElementById('vpsServerName').textContent = status.server.name || '—';
+                                document.getElementById('vpsIP').textContent = status.server.ip || '—';
+                                document.getElementById('vpsPython').textContent = status.server.python || '—';
+                                document.getElementById('vpsCPU').textContent = status.server.cpu || '—';
+                                document.getElementById('vpsRAM').textContent = status.server.ram || '—';
+                            }
+                            fetchAllData();
+                        } else {
+                            document.getElementById('vpsStatusMsg').textContent = 'Enter VPS details to connect';
+                        }
+                    });
+                }
+            }
+
+            function logout() {
+                localStorage.removeItem('loggedInUser');
+                currentUser = null;
+                isLoggedIn = false;
+                isOwner = false;
+                isAdmin = false;
+                if (uptimeInterval) clearInterval(uptimeInterval);
+                if (statInterval) clearInterval(statInterval);
+                dashboardPage.style.display = 'none';
+                loginBox.classList.remove('hidden');
+                document.getElementById('vpsConnectionBox').classList.remove('show');
+                profileDropdown.classList.remove('open');
+                showToast('🚪 LOGGED OUT', false);
+                document.title = 'PYTHON HOSTING · Login';
+            }
+
+            unlockBtn.addEventListener('click', async function() {
+                const username = userInput.value.trim();
+                const password = passInput.value.trim();
+                if (!username || !password) {
+                    loginError.textContent = '❌ Please enter username and password';
+                    loginError.classList.add('show');
+                    setTimeout(() => loginError.classList.remove('show'), 2000);
+                    return;
+                }
+                const success = await performLogin(username, password);
+                if (success) {
+                    initDashboard();
+                }
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !loginBox.classList.contains('hidden')) {
+                    unlockBtn.click();
+                }
+            });
+
+            // ----- PROFILE DROPDOWN -----
+            profileIcon.addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.toggle('open');
+            });
+
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.profile-icon') && !e.target.closest('.profile-dropdown')) {
+                    profileDropdown.classList.remove('open');
+                }
+            });
+
+            // ----- VPS -----
+            document.getElementById('vpsConnectBtn').addEventListener('click', openVPSModal);
+            document.getElementById('vpsModalConnect').addEventListener('click', function() {
+                const url = document.getElementById('vpsUrlInput').value.trim();
+                const apiKey = document.getElementById('vpsApiKeyInput').value.trim();
+                if (!url) { showToast('❌ Enter URL', true); return; }
+                if (!apiKey) { showToast('❌ Enter API Key', true); return; }
+                connectToVPS(url, apiKey);
+            });
+            document.getElementById('vpsModalCancel').addEventListener('click', closeVPSModal);
+            document.getElementById('vpsDisconnectBtn').addEventListener('click', disconnectVPS);
+            document.getElementById('vpsRefreshBtn').addEventListener('click', function() {
+                if (isVPSConnected) { fetchAllData(); showToast('🔄 Refreshed', false); }
+                else { showToast('Connect to VPS first', true); }
+            });
+
+            // ----- MENU ITEMS -----
+            document.getElementById('menuChangeUsername').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                showCustomModal('Change Username',
+                    '<div class="input-group"><label>New Username</label><input type="text" id="newUsername" value="' + currentUser.username + '"></div>',
+                    'Update', function() {
+                        const newName = document.getElementById('newUsername').value.trim();
+                        if (!newName) { showToast('Username required', true); return; }
+                        currentUser.username = newName;
+                        localStorage.setItem('loggedInUser', JSON.stringify(currentUser));
+                        updateUI();
+                        showToast('✏️ Updated', false);
+                        closeModal('modalOverlay');
+                    });
+            });
+
+            document.getElementById('menuChangePassword').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                showCustomModal('Change Password',
+                    '<div class="input-group"><label>Current</label><input type="password" id="currentPass"></div>' +
+                    '<div class="input-group"><label>New</label><input type="password" id="newPass"></div>' +
+                    '<div class="input-group"><label>Confirm</label><input type="password" id="confirmPass"></div>',
+                    'Update', function() {
+                        const current = document.getElementById('currentPass').value;
+                        const newPass = document.getElementById('newPass').value;
+                        const confirm = document.getElementById('confirmPass').value;
+                        if (!current || !newPass || !confirm) { showToast('All fields required', true); return; }
+                        if (newPass !== confirm) { showToast('Passwords mismatch', true); return; }
+                        currentUser.password = newPass;
+                        localStorage.setItem('loggedInUser', JSON.stringify(currentUser));
+                        showToast('🔑 Updated', false);
+                        closeModal('modalOverlay');
+                    });
+            });
+
+            document.getElementById('menuMyFiles').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                openMyFiles();
+            });
+
+            document.getElementById('menuMyNodes').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                openMyNodes();
+            });
+
+            document.getElementById('menuTerminal').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                if (!isAdmin) { showToast('Admin only', true); return; }
+                openTerminal();
+            });
+
+            document.getElementById('menuAddUser').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                if (!isAdmin) { showToast('Admin only', true); return; }
+                openAddUser();
+            });
+
+            document.getElementById('menuAllUsers').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                if (!isAdmin) { showToast('Admin only', true); return; }
+                openAllUsers();
+            });
+
+            document.getElementById('menuAllFiles').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                if (!isAdmin) { showToast('Admin only', true); return; }
+                openAllFiles();
+            });
+
+            document.getElementById('menuAddAdmin').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                if (!isOwner) { showToast('Owner only', true); return; }
+                openAddAdmin();
+            });
+
+            document.getElementById('menuAdminList').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                if (!isOwner) { showToast('Owner only', true); return; }
+                openAdminList();
+            });
+
+            document.getElementById('menuPanelSettings').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                if (!isAdmin) { showToast('Admin only', true); return; }
+                openSettings();
+            });
+
+            document.getElementById('menuLogout').addEventListener('click', function(e) {
+                e.stopPropagation();
+                profileDropdown.classList.remove('open');
+                logout();
+            });
+
+            document.getElementById('logoutBtn').addEventListener('click', logout);
+
+            // ----- DASHBOARD -----
+            document.getElementById('dashboardBtn').addEventListener('click', function() {
+                showToast('🏠 Dashboard', false);
+            });
+
+            document.getElementById('keepaliveBtn').addEventListener('click', function() {
+                if (isVPSConnected) { fetchAllData(); showToast('♾ Refreshed', false); }
+                else { showToast('Connect to VPS first', true); }
+            });
+
+            // ----- UPLOAD -----
+            document.getElementById('uploadBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                
+                const fileInput = document.getElementById('fileInput');
+                if (fileInput.files.length === 0) { showToast('⚠️ Select a file', true); return; }
+                
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                
+                try {
+                    document.getElementById('uploadStatus').textContent = '⏳ Uploading...';
+                    const data = await vpsApiUpload('/api/files/upload', formData);
+                    showToast('📤 Uploaded', false, data.message || 'Success');
+                    document.getElementById('uploadStatus').textContent = '✅ Uploaded';
+                    fileInput.value = '';
+                    fetchAllData();
+                } catch (e) {
+                    document.getElementById('uploadStatus').textContent = '❌ ' + e.message;
+                    showToast('Upload failed', true, e.message);
+                }
+            });
+
+            // ----- DEPLOY -----
+            document.getElementById('deployBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                
+                const code = document.getElementById('pyCodeArea').value.trim();
+                const filename = document.getElementById('pyFilename').value.trim() || 'main.py';
+                
+                if (!code) { showToast('⚠️ Enter code', true); return; }
+                
+                try {
+                    document.getElementById('deployStatus').textContent = '⏳ Deploying...';
+                    const data = await vpsApiCall('/api/nodes/deploy', 'POST', { name: filename, code: code });
+                    showToast('✅ Deployed', false, filename + ' running');
+                    document.getElementById('deployStatus').textContent = '✅ ' + filename + ' deployed (PID: ' + (data.pid || 'OK') + ')';
+                    document.getElementById('pyCodeArea').value = '';
+                    fetchAllData();
+                } catch (e) {
+                    document.getElementById('deployStatus').textContent = '❌ ' + e.message;
+                    showToast('Deploy failed', true, e.message);
+                }
+            });
+
+            // ----- START / STOP ALL -----
+            document.getElementById('startAllBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    const data = await vpsApiCall('/api/nodes/start-all', 'POST');
+                    showToast('▶ Started', false, data.message || 'Nodes started');
+                    fetchAllData();
+                } catch (e) {
+                    showToast('Error', true, e.message);
+                }
+            });
+
+            document.getElementById('stopAllBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    const data = await vpsApiCall('/api/nodes/stop-all', 'POST');
+                    showToast('■ Stopped', false, data.message || 'Nodes stopped');
+                    fetchAllData();
+                } catch (e) {
+                    showToast('Error', true, e.message);
+                }
+            });
+
+            document.getElementById('restartAllBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    const data = await vpsApiCall('/api/nodes/restart-all', 'POST');
+                    showToast('↻ Restarted', false, data.message || 'Nodes restarted');
+                    fetchAllData();
+                } catch (e) {
+                    showToast('Error', true, e.message);
+                }
+            });
+
+            // ----- MANAGE -----
+            document.getElementById('logsBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    const data = await vpsApiCall('/api/nodes/logs/all', 'GET');
+                    showCustomModal('📜 System Logs',
+                        `<div style="background:#050807;border:1px solid rgba(0,255,136,0.1);border-radius:6px;padding:10px;max-height:300px;overflow-y:auto;font-family:'Courier New',monospace;font-size:0.7rem;color:#00ff88;white-space:pre-wrap;word-break:break-all;">${data.logs || 'No logs'}</div>`,
+                        'Close', function() { closeModal('modalOverlay'); });
+                } catch (e) {
+                    showToast('Error', true, e.message);
+                }
+            });
+
+            document.getElementById('onBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall('/api/nodes/247', 'POST', { enabled: true });
+                    showToast('☺ 24/7 ON', false);
+                } catch (e) {
+                    showToast('Error', true, e.message);
+                }
+            });
+
+            document.getElementById('offBtn').addEventListener('click', async function() {
+                if (!isVPSConnected) { showToast('Connect to VPS first', true); return; }
+                try {
+                    await vpsApiCall('/api/nodes/247', 'POST', { enabled: false });
+                    showToast('☹ 24/7 OFF', false);
+                } catch (e) {
+                    showToast('Error', true, e.message);
+                }
+            });
+
+            // ----- DOWNLOAD / DELETE -----
+            document.getElementById('downloadBtn').addEventListener('click', openDownloadModal);
+            document.getElementById('deleteBtn').addEventListener('click', openDeleteModal);
+
+            // ----- ADD USER -----
+            document.getElementById('addUserCancelBtn').addEventListener('click', function() {
+                closeModal('addUserModal');
+            });
+            document.getElementById('addUserConfirmBtn').addEventListener('click', async function() {
+                const username = document.getElementById('addUsername').value.trim();
+                const password = document.getElementById('addPassword').value.trim();
+                const plan = document.getElementById('addPlan').value;
+                
+                if (!username || !password) { showToast('Username and password required', true); return; }
+                
+                try {
+                    await vpsApiCall('/api/admin/users', 'POST', { username, password, plan });
+                    showToast('➕ Added', false, username);
+                    closeModal('addUserModal');
+                    fetchAllData();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            });
+
+            // ----- ADD ADMIN -----
+            document.getElementById('addAdminCancelBtn').addEventListener('click', function() {
+                closeModal('addAdminModal');
+            });
+            document.getElementById('addAdminConfirmBtn').addEventListener('click', async function() {
+                const username = document.getElementById('addAdminUsername').value.trim();
+                const password = document.getElementById('addAdminPassword').value.trim();
+                
+                if (!username || !password) { showToast('Username and password required', true); return; }
+                
+                try {
+                    await vpsApiCall('/api/admin/users', 'POST', { username, password, role: 'admin' });
+                    showToast('👑 Admin added', false, username);
+                    closeModal('addAdminModal');
+                    fetchAllData();
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            });
+
+            // ----- SETTINGS -----
+            document.getElementById('settingsCancelBtn').addEventListener('click', function() {
+                closeModal('settingsModal');
+            });
+            document.getElementById('settingsSaveBtn').addEventListener('click', async function() {
+                const siteName = document.getElementById('settingsSiteName').value.trim();
+                const telegram = document.getElementById('settingsTelegram').value.trim();
+                const maintenance = document.getElementById('settingsMaintenance').checked;
+                
+                if (!siteName) { showToast('Site name required', true); return; }
+                
+                try {
+                    await vpsApiCall('/api/settings', 'PUT', { siteName, telegram, maintenance });
+                    settings.siteName = siteName;
+                    settings.telegram = telegram;
+                    settings.maintenance = maintenance;
+                    document.title = siteName + ' · Dashboard';
+                    document.getElementById('dmBuyLink').href = 'https://t.me/' + telegram;
+                    showToast('💾 Saved', false);
+                    closeModal('settingsModal');
+                } catch (e) {
+                    showToast('Error: ' + e.message, true);
+                }
+            });
+
+            // ----- MODAL CLOSE -----
+            document.getElementById('myFilesCloseBtn').addEventListener('click', function() {
+                closeModal('myFilesModal');
+            });
+            document.getElementById('myNodesCloseBtn').addEventListener('click', function() {
+                closeModal('myNodesModal');
+            });
+            document.getElementById('allUsersCloseBtn').addEventListener('click', function() {
+                closeModal('allUsersModal');
+            });
+            document.getElementById('allFilesCloseBtn').addEventListener('click', function() {
+                closeModal('allFilesModal');
+            });
+            document.getElementById('adminListCloseBtn').addEventListener('click', function() {
+                closeModal('adminListModal');
+            });
+            document.getElementById('terminalCloseBtn').addEventListener('click', function() {
+                closeModal('terminalModal');
+            });
+
+            // ----- TERMINAL -----
+            let terminalHistory = [];
+            const terminalOutput = document.getElementById('terminalOutput');
+            const terminalInput = document.getElementById('terminalInput');
+
+            function appendTerminal(text) {
+                terminalOutput.textContent += text + '\n';
+                terminalOutput.scrollTop = terminalOutput.scrollHeight;
+            }
+
+            document.getElementById('terminalSendBtn').addEventListener('click', async function() {
+                const cmd = terminalInput.value.trim();
+                if (!cmd) return;
+                
+                appendTerminal('$> ' + cmd);
+                terminalHistory.push(cmd);
+                terminalInput.value = '';
+                
+                if (!isVPSConnected) {
+                    appendTerminal('❌ Connect to VPS first');
+                    return;
+                }
+                
+                try {
+                    const data = await vpsApiCall('/api/terminal/exec', 'POST', { command: cmd });
+                    if (data.output) appendTerminal(data.output);
+                    if (data.error) appendTerminal('Error: ' + data.error);
+                } catch (e) {
+                    appendTerminal('Command failed: ' + e.message);
+                }
+            });
+
+            terminalInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') document.getElementById('terminalSendBtn').click();
+                if (e.key === 'ArrowUp' && terminalHistory.length > 0) {
+                    terminalInput.value = terminalHistory[terminalHistory.length - 1];
+                }
+            });
+
+            document.getElementById('terminalClearBtn').addEventListener('click', function() {
+                terminalOutput.textContent = '';
+                appendTerminal('$> Terminal cleared');
+            });
+
+            // ============================================================
+            // INIT
+            // ============================================================
+            function init() {
+                loader.style.display = 'flex';
+                updateLoader(0);
+                
+                const startTime = Date.now();
+                const targetDuration = 3000;
+                
+                function updateProgress() {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min((elapsed / targetDuration) * 100, 100);
+                    updateLoader(progress);
+                    if (progress < 100) {
+                        requestAnimationFrame(updateProgress);
+                    }
+                }
+                updateProgress();
+
+                const savedUser = localStorage.getItem('loggedInUser');
+                if (savedUser) {
+                    try {
+                        const parsed = JSON.parse(savedUser);
+                        currentUser = parsed;
+                        currentRole = parsed.role;
+                        isOwner = (parsed.role === 'owner');
+                        isAdmin = (parsed.role === 'admin' || parsed.role === 'owner');
+                        isLoggedIn = true;
+                    } catch(e) {}
+                }
+
+                if (vpsUrl) {
+                    document.getElementById('vpsUrlInput').value = vpsUrl;
+                }
+                if (vpsApiKey) {
+                    document.getElementById('vpsApiKeyInput').value = vpsApiKey;
+                }
+
+                setTimeout(function() {
+                    hideLoader();
+                    if (isLoggedIn && currentUser) {
+                        initDashboard();
+                    } else {
+                        loginBox.classList.remove('hidden');
+                        dashboardPage.style.display = 'none';
+                        userInput.value = '';
+                        passInput.value = '';
+                    }
+                }, 3200);
+            }
+
+            window.addEventListener('load', init);
+            console.log('✅ PYTHON HOSTING - Backend Login Fixed');
+
+        })();
+    </script>
+
+</body>
+</html>
