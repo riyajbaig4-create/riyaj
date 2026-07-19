@@ -270,7 +270,7 @@ def _cache_invalidator():
     except:
         pass
     # हर 30 सेकंड में चेक करेगा
-    threading.Timer(30, _cache_invalidator).start()
+    threading.Timer(1, _cache_invalidator).start()
 
 # सर्वर स्टार्ट होते ही ये चल जाएगा
 _cache_invalidator()
