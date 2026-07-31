@@ -172,7 +172,6 @@ def init_db():
         conn.execute('CREATE INDEX IF NOT EXISTS idx_logs_website ON logs(website_id)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_deployments_website ON deployments(website_id)')
         
-        # Default Config (Offset)
         conn.execute('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)',
                      ('total_hours_offset', '0'))
         conn.commit()
@@ -2215,7 +2214,7 @@ EDIT_TEMPLATE = """
 </head><body><div class="container"><a href="/website/{{ website.id }}/files">← Back</a><h2>{{ file_path }}</h2><form method="POST"><textarea name="content">{{ content }}</textarea><button class="save" type="submit">Save</button></form></div></body></html>
 """
 
-# Due to character limit, the HTML template will be provided in the next message
+# Due to character limit, HTML template will be continued...
 
 # ---------- MAIN HTML TEMPLATE ----------
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -2801,7 +2800,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             cursor: pointer;
         }
 
-        /* Console */
+        /* Console - NO AUTO SCROLL */
         .console-wrapper {
             display: flex;
             align-items: stretch;
@@ -4532,6 +4531,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 try {
                     const data = await apiCall(`/api/website/${id}/logs`);
                     websiteConsole.textContent = data.logs || 'No logs yet.';
+                    // ✅ NO AUTO SCROLL - user manually scroll karega
                 } catch (e) {
                     if (!silent) websiteConsole.textContent = 'Error loading logs.';
                 }
@@ -4612,12 +4612,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         grid.insertAdjacentHTML('beforeend', cardHtml);
                         attachWebsiteEvents();
                         attachWebsiteCardClicks();
-                        // Start uptime if running
                         if (newWebsite.status === 'running' && newWebsite.last_start_time) {
                             const start = new Date(newWebsite.last_start_time).getTime() / 1000;
                             startUptimeUpdate(`w-uptime-${newWebsite.id}`, start);
                         }
-                        // Auto select new website
                         selectWebsite(newWebsite.id);
                     }
                 } catch (e) {
@@ -4819,6 +4817,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 try {
                     const data = await apiCall(`/api/bots/${botId}/logs`);
                     botConsole.textContent = data.logs || 'No logs yet.';
+                    // ✅ NO AUTO SCROLL - user manually scroll karega
                 } catch (e) {
                     if (!silent) botConsole.textContent = 'Error loading logs.';
                 }
@@ -5482,7 +5481,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         const data = await res.json();
                         if (data.output) {
                             terminalOutput.innerHTML += `<span class="output">${escapeHtml(data.output)}</span>`;
-                            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+                            // ✅ NO AUTO SCROLL - user manually scroll karega
                         }
                         isTerminalRunning = data.running;
                         termStopBtn.disabled = !isTerminalRunning;
@@ -5692,7 +5691,7 @@ evt.onmessage = function(e) {
     const div = document.createElement('div');
     div.textContent = e.data;
     document.getElementById('logContainer').appendChild(div);
-    document.getElementById('terminal').scrollTop = document.getElementById('terminal').scrollHeight;
+    // ✅ NO AUTO SCROLL - user manually scroll karega
 };
 </script></body></html>
 """
