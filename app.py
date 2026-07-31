@@ -167,10 +167,12 @@ def init_db():
             value TEXT
         )''')
         
+        # ✅ FIXED: Changed NULL to EXISTS
         conn.execute('CREATE INDEX IF NOT EXISTS idx_websites_owner ON websites(owner_username)')
-        conn.execute('CREATE INDEX IF NOT NULL idx_logs_website ON logs(website_id)')
-        conn.execute('CREATE INDEX IF NOT NULL idx_deployments_website ON deployments(website_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_logs_website ON logs(website_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_deployments_website ON deployments(website_id)')
         
+        # Default Config (Offset)
         conn.execute('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)',
                      ('total_hours_offset', '0'))
         conn.commit()
