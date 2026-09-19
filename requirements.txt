@@ -6,3 +6,4 @@ urllib3
 pycryptodome
 protobuf
 orjson
+gunicorn==21.2.0
