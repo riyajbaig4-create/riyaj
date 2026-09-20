@@ -54,10 +54,71 @@ LIKE_CONCUR = 150
 REQUEST_TIMEOUT = 15
 API_KEY = "NirobAPI_Secret_2026_ChangeMe"
 
-# ✅ NEW: Direct Telegram Report (no bot URL needed)
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8313866882:AAErkYNbNWDY0pl60NQbIJ3eZtn5NoIn3fI")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "5674825926"))
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+# ============================================================
+#  🔄 BOT SE TOKEN FETCH — Runtime config
+# ============================================================
+# Bot ka URL (jahan uska report server chal raha hai)
+# Same machine pe ho to 127.0.0.1 rakho, alag server pe ho to public URL daalo
+BOT_CONFIG_URL = os.environ.get(
+    "BOT_CONFIG_URL",
+    "http://127.0.0.1:5001/api/get-tg-config"
+)
+BOT_CONFIG_KEY = os.environ.get(
+    "BOT_CONFIG_KEY",
+    "NirobBot_Report_Secret_2026"
+)
+
+# Runtime variables (bot se fetch honge)
+TG_TOKEN = None
+TG_ADMIN_ID = None
+
+# Fallback (agar bot offline ho aur tu manually dekhna chahe)
+FALLBACK_BOT_TOKEN = os.environ.get("FALLBACK_BOT_TOKEN", "")
+FALLBACK_ADMIN_ID = int(os.environ.get("FALLBACK_ADMIN_ID", "0"))
+
+
+def fetch_tg_config_from_bot():
+    """Bot se token aur admin_id fetch karo"""
+    global TG_TOKEN, TG_ADMIN_ID
+    try:
+        r = requests.get(
+            BOT_CONFIG_URL,
+            headers={"X-API-Key": BOT_CONFIG_KEY},
+            timeout=10
+        )
+        if r.status_code == 200:
+            d = r.json()
+            token = d.get("bot_token")
+            admin = d.get("admin_id")
+            if token and admin:
+                TG_TOKEN = token
+                TG_ADMIN_ID = int(admin)
+                print(f"✅ [BOT] Token fetched: ...{TG_TOKEN[-10:]}")
+                print(f"✅ [BOT] Admin ID: {TG_ADMIN_ID}")
+                return True
+        print(f"❌ [BOT] HTTP {r.status_code}: {r.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"❌ [BOT] Fetch failed: {e}")
+        return False
+
+
+def get_tg_config():
+    """Token uthao — agar cache nahi hai to bot se fetch karo, phir fallback"""
+    global TG_TOKEN, TG_ADMIN_ID
+    if not TG_TOKEN or not TG_ADMIN_ID:
+        # 1. Bot se try karo
+        if fetch_tg_config_from_bot():
+            return TG_TOKEN, TG_ADMIN_ID
+        # 2. Fallback use karo
+        if FALLBACK_BOT_TOKEN and FALLBACK_ADMIN_ID:
+            print("⚠️ [BOT] Using fallback config")
+            TG_TOKEN = FALLBACK_BOT_TOKEN
+            TG_ADMIN_ID = FALLBACK_ADMIN_ID
+            return TG_TOKEN, TG_ADMIN_ID
+        return None, None
+    return TG_TOKEN, TG_ADMIN_ID
+
 
 # Level based limits
 LEVEL_LIMITS = {
@@ -418,11 +479,18 @@ def _parse_account_info(pb_obj):
         return None
 
 # ============================================================
-#  ✅ REPORT TO BOT — Direct Telegram API (No bot URL needed!)
+#  ✅ REPORT TO BOT — Token runtime pe bot se aata hai
 # ============================================================
 def send_report_to_bot(target_uid, nickname, region, likes_given, before, after,
                        gift, elapsed, total_tokens, success_tokens):
-    """Send report directly to Telegram Bot API (no bot server URL needed)"""
+    """Send report directly to Telegram Bot API — token bot se fetched"""
+    token, admin_id = get_tg_config()
+    if not token or not admin_id:
+        print("[REPORT] ❌ No TG config available (bot offline?)")
+        return False
+
+    telegram_api = f"https://api.telegram.org/bot{token}/sendMessage"
+
     msg = "📊 <b>LIKE REPORT</b>\n"
     msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
     msg += f"🎯 <b>Target:</b> <code>{target_uid}</code>\n"
@@ -453,9 +521,9 @@ def send_report_to_bot(target_uid, nickname, region, likes_given, before, after,
 
     try:
         r = requests.post(
-            TELEGRAM_API,
+            telegram_api,
             json={
-                "chat_id": ADMIN_ID,
+                "chat_id": admin_id,
                 "text": msg,
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True
@@ -463,7 +531,7 @@ def send_report_to_bot(target_uid, nickname, region, likes_given, before, after,
             timeout=15
         )
         if r.status_code == 200:
-            print(f"[REPORT] ✅ Sent to Telegram")
+            print(f"[REPORT] ✅ Sent to Telegram (admin {admin_id})")
             return True
         print(f"[REPORT] ❌ TG API failed: {r.status_code} {r.text[:200]}")
         return False
@@ -739,6 +807,44 @@ def health():
     return _jsonify({"status": "ok", "service": BRAND_NAME,
                      "version": VERSION, "release": RELEASE_VERSION,
                      "time": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")})
+
+
+# ============================================================
+#  🔄 TG CONFIG ENDPOINTS (bot se sync)
+# ============================================================
+@app.get("/api/tg/refresh")
+def api_tg_refresh():
+    """Bot se dobara token fetch karo"""
+    ok = fetch_tg_config_from_bot()
+    if ok:
+        return _jsonify({
+            "status": "ok", "message": "Token refreshed from bot",
+            "admin_id": TG_ADMIN_ID,
+            "token_masked": f"{TG_TOKEN[:10]}...{TG_TOKEN[-6:]}"
+        })
+    return _jsonify({
+        "status": "error",
+        "message": "Bot not reachable",
+        "bot_url": BOT_CONFIG_URL
+    }), 503
+
+
+@app.get("/api/tg/status")
+def api_tg_status():
+    """Current TG config status"""
+    token, admin = get_tg_config()
+    if not token:
+        return _jsonify({
+            "status": "error",
+            "message": "No token available (bot offline)",
+            "bot_url": BOT_CONFIG_URL
+        })
+    return _jsonify({
+        "status": "ok",
+        "token_masked": f"{token[:10]}...{token[-6:]}",
+        "admin_id": admin,
+        "source": "bot" if TG_TOKEN else "fallback"
+    })
 
 
 @app.get("/api/tokens/status")
@@ -1369,5 +1475,13 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 {BRAND_NAME} v{VERSION} on port {port}")
     print(f"📋 Endpoints: 35+")
-    print(f"📤 Report → Direct Telegram API (Admin: {ADMIN_ID})")
+    print(f"🔗 Bot Config URL: {BOT_CONFIG_URL}")
+
+    # ✅ Startup pe bot se token fetch karo
+    print("🔄 Fetching TG config from bot...")
+    if fetch_tg_config_from_bot():
+        print(f"✅ TG config ready! Admin: {TG_ADMIN_ID}")
+    else:
+        print("⚠️ Bot offline — report baad me try hogi (fetch on demand)")
+
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
