@@ -1,7 +1,4 @@
-# like_web.py — NIROBxFREExLIKE v4.0 FULL (2000+ lines, single file)
-# ============================================================
-#  COMPLETE WEB + API + 32 ENDPOINTS + LEVEL LIMITS + PER-TOKEN
-# ============================================================
+# like_web.py — NIROBxFREExLIKE v4.0 (Web + API + Admin)
 import os
 import json
 import base64
@@ -65,14 +62,20 @@ LEVEL_LIMITS = {
 }
 
 def get_level_limit(level):
-    if not level or level <= 0: return 20
-    if level in LEVEL_LIMITS: return LEVEL_LIMITS[level]
+    if not level or level <= 0:
+        return 20
+    if level in LEVEL_LIMITS:
+        return LEVEL_LIMITS[level]
     closest = 0
     for lvl in sorted(LEVEL_LIMITS.keys()):
-        if lvl <= level: closest = lvl
-        else: break
-    if closest: return LEVEL_LIMITS[closest]
-    if level <= 8: return 20
+        if lvl <= level:
+            closest = lvl
+        else:
+            break
+    if closest:
+        return LEVEL_LIMITS[closest]
+    if level <= 8:
+        return 20
     return 500
 
 # Counters
@@ -127,14 +130,18 @@ config_lock = RLock()
 # ============================================================
 def _read_config():
     path = CONFIG_RW_PATH if os.path.exists(CONFIG_RW_PATH) else CONFIG_RO_PATH
-    if not os.path.exists(path): raise FileNotFoundError("keys.json not found")
-    with open(path) as f: return json.load(f)
+    if not os.path.exists(path):
+        raise FileNotFoundError("keys.json not found")
+    with open(path) as f:
+        return json.load(f)
 
 def get_allowed_keys():
-    with config_lock: return _read_config()["ALLOWED_KEYS"]
+    with config_lock:
+        return _read_config()["ALLOWED_KEYS"]
 
 def get_admin_keys():
-    with config_lock: return set(_read_config()["ADMIN_KEYS"])
+    with config_lock:
+        return set(_read_config()["ADMIN_KEYS"])
 
 def is_valid_key(api_key):
     try:
@@ -143,21 +150,29 @@ def is_valid_key(api_key):
         return False
 
 def escape_html(text):
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
 
 # ============================================================
 #  HISTORY
 # ============================================================
 def load_history():
-    if not os.path.exists(HISTORY_FILE): return []
+    if not os.path.exists(HISTORY_FILE):
+        return []
     try:
-        with open(HISTORY_FILE) as f: return json.load(f)
-    except Exception: return []
+        with open(HISTORY_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 def save_history(h):
     try:
-        with open(HISTORY_FILE, "w") as f: json.dump(h, f, indent=2)
-    except Exception: pass
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(h, f, indent=2)
+    except Exception:
+        pass
 
 def add_history(event_type, details):
     history = load_history()
@@ -183,14 +198,18 @@ def load_stats():
             "last_updated": None
         }
     try:
-        with open(STATS_FILE) as f: return json.load(f)
-    except Exception: return {}
+        with open(STATS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 def save_stats(stats):
     stats["last_updated"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     try:
-        with open(STATS_FILE, "w") as f: json.dump(stats, f, indent=2)
-    except Exception: pass
+        with open(STATS_FILE, "w") as f:
+            json.dump(stats, f, indent=2)
+    except Exception:
+        pass
 
 # ============================================================
 #  GUEST DB
@@ -199,7 +218,8 @@ def load_guests_db():
     if not os.path.exists(GUESTS_DB_PATH):
         return {r: [] for r in SERVER_CONFIG.keys()}
     try:
-        with open(GUESTS_DB_PATH) as f: return json.load(f)
+        with open(GUESTS_DB_PATH) as f:
+            return json.load(f)
     except Exception:
         return {r: [] for r in SERVER_CONFIG.keys()}
 
@@ -225,28 +245,38 @@ def _extract_jwt_list(data):
     def is_jwt(s):
         return isinstance(s, str) and len(s) > 50 and s.count(".") == 2
     def push(v):
-        if is_jwt(v): tokens.append(v)
+        if is_jwt(v):
+            tokens.append(v)
     def handle(item):
-        if isinstance(item, str): push(item); return
+        if isinstance(item, str):
+            push(item); return
         if isinstance(item, dict):
             for k in ("token", "jwt_token", "jwt", "access_token"):
-                if k in item: push(item[k]); return
+                if k in item:
+                    push(item[k]); return
             for v in item.values():
-                if isinstance(v, str): push(v); return
+                if isinstance(v, str):
+                    push(v); return
     if isinstance(data, list):
-        for x in data: handle(x)
+        for x in data:
+            handle(x)
     elif isinstance(data, dict):
         for w in ("tokens", "jwt_tokens", "data", "items"):
             if w in data and isinstance(data[w], list):
-                for x in data[w]: handle(x)
-                if tokens: return tokens
+                for x in data[w]:
+                    handle(x)
+                if tokens:
+                    return tokens
         for k, v in data.items():
-            if isinstance(v, str): push(v)
+            if isinstance(v, str):
+                push(v)
             elif isinstance(v, dict):
                 for kk in ("token", "jwt_token", "jwt"):
-                    if kk in v: push(v[kk]); break
+                    if kk in v:
+                        push(v[kk]); break
             elif isinstance(v, list):
-                for x in v: handle(x)
+                for x in v:
+                    handle(x)
     return tokens
 
 def _decode_jwt_uid(token):
@@ -268,9 +298,11 @@ def _decode_jwt_payload(token):
 
 def _load_jwt_for_server(region):
     cfg = SERVER_CONFIG.get(region.upper())
-    if not cfg: return []
+    if not cfg:
+        return []
     path = os.path.join(BASE_DIR, cfg["jwt"])
-    if not os.path.exists(path): return []
+    if not os.path.exists(path):
+        return []
     try:
         with open(path) as f:
             return _extract_jwt_list(json.load(f))
@@ -279,29 +311,36 @@ def _load_jwt_for_server(region):
 
 def _save_jwt_for_server(region, tokens):
     cfg = SERVER_CONFIG.get(region.upper())
-    if not cfg: return 0
+    if not cfg:
+        return 0
     path = os.path.join(BASE_DIR, cfg["jwt"])
     fmt = [{"token": t} for t in tokens if t]
     try:
-        with open(path, "w") as f: json.dump(fmt, f, indent=2)
+        with open(path, "w") as f:
+            json.dump(fmt, f, indent=2)
         return len(fmt)
     except Exception:
         return 0
 
 def _load_accounts_for_server(region):
     cfg = SERVER_CONFIG.get(region.upper())
-    if not cfg: return []
+    if not cfg:
+        return []
     path = os.path.join(BASE_DIR, cfg["accounts"])
-    if not os.path.exists(path): return []
+    if not os.path.exists(path):
+        return []
     out = []
     with open(path) as f:
         for ln in f:
             ln = ln.strip()
-            if not ln or ln.startswith("#") or ":" not in ln: continue
+            if not ln or ln.startswith("#") or ":" not in ln:
+                continue
             uid, pw = ln.split(":", 1)
             uid, pw = uid.strip(), pw.strip()
-            if uid.lower() == "uid" or pw.lower() == "password": continue
-            if uid and pw: out.append((uid, pw))
+            if uid.lower() == "uid" or pw.lower() == "password":
+                continue
+            if uid and pw:
+                out.append((uid, pw))
     return out
 
 # ============================================================
@@ -329,14 +368,18 @@ def enc(uid):
 
 def _like_url_for(s):
     s = s.upper()
-    if s == "IND": return "https://client.ind.freefiremobile.com/LikeProfile"
-    if s in {"BR", "US", "SAC", "NA"}: return "https://client.us.freefiremobile.com/LikeProfile"
+    if s == "IND":
+        return "https://client.ind.freefiremobile.com/LikeProfile"
+    if s in {"BR", "US", "SAC", "NA"}:
+        return "https://client.us.freefiremobile.com/LikeProfile"
     return "https://clientbp.ggpolarbear.com/LikeProfile"
 
 def _show_url_for(s):
     s = s.upper()
-    if s == "IND": return "https://client.ind.freefiremobile.com/GetPlayerPersonalShow"
-    if s in {"BR", "US", "SAC", "NA"}: return "https://client.us.freefiremobile.com/GetPlayerPersonalShow"
+    if s == "IND":
+        return "https://client.ind.freefiremobile.com/GetPlayerPersonalShow"
+    if s in {"BR", "US", "SAC", "NA"}:
+        return "https://client.us.freefiremobile.com/GetPlayerPersonalShow"
     return "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
 
 def make_request(encrypted, region, token, timeout=REQUEST_TIMEOUT):
@@ -360,13 +403,15 @@ def make_request(encrypted, region, token, timeout=REQUEST_TIMEOUT):
 
 def _parse_account_info(pb_obj):
     try:
-        if pb_obj is None: return None
+        if pb_obj is None:
+            return None
         js = json.loads(MessageToJson(pb_obj))
         ai = js.get("AccountInfo", {})
         uid = int(ai.get("UID", 0))
         likes = int(ai.get("Likes", 0))
         name = str(ai.get("PlayerNickname", ""))
-        if uid <= 0: return None
+        if uid <= 0:
+            return None
         return {"uid": uid, "likes": likes, "name": name}
     except Exception:
         return None
@@ -383,13 +428,19 @@ def send_report_to_bot(target_uid, nickname, region, likes_given, before, after,
             "password": str(t.get("password", "")),
             "level": int(t.get("level", 8))
         })
-    if not uid_pass_list: return False
+    if not uid_pass_list:
+        return False
     payload = {
-        "target_uid": str(target_uid), "target_nickname": str(nickname),
-        "target_region": str(region), "likes_given": int(likes_given),
-        "likes_before": int(before), "likes_after": int(after),
-        "gift_count": int(gift), "elapsed": float(elapsed),
-        "total_tokens": int(total_tokens), "success_count": len(uid_pass_list),
+        "target_uid": str(target_uid),
+        "target_nickname": str(nickname),
+        "target_region": str(region),
+        "likes_given": int(likes_given),
+        "likes_before": int(before),
+        "likes_after": int(after),
+        "gift_count": int(gift),
+        "elapsed": float(elapsed),
+        "total_tokens": int(total_tokens),
+        "success_count": len(uid_pass_list),
         "uid_pass_list": uid_pass_list,
         "time": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     }
@@ -402,7 +453,7 @@ def send_report_to_bot(target_uid, nickname, region, likes_given, before, after,
         return False
 
 # ============================================================
-#  HTML — WEBSITE UI
+#  HTML
 # ============================================================
 INDEX_HTML = """
 <!DOCTYPE html><html lang="en"><head>
@@ -547,9 +598,15 @@ document.getElementById('send').onclick=async()=>{
             <div class="tok-line"><span class="pwd">Pass: ${t.password||'?'}</span></div>
           </div>`;
         });
+        if(d.success_tokens.length>15){
+          html += `<div style="text-align:center;color:#888;font-size:11px;margin-top:5px">+${d.success_tokens.length-15} more</div>`;
+        }
       }
       res.className='result show ok';
       res.innerHTML=html;
+    } else if(d.status===0){
+      res.className='result show err';
+      res.innerHTML=`⚠️ No likes given<br>Player: ${d.PlayerNickname}<br>UID: ${d.UID}`;
     } else {
       res.className='result show err';
       res.innerHTML=`❌ ${d.error || 'Failed'}`;
@@ -558,7 +615,9 @@ document.getElementById('send').onclick=async()=>{
     clearTimeout(tid);
     res.className='result show err';
     res.textContent = e.name==='AbortError' ? '⏱ Timeout' : 'Error: '+e.message;
-  } finally { btn.disabled=false; btn.textContent='🚀 SEND LIKES'; }
+  } finally {
+    btn.disabled=false; btn.textContent='🚀 SEND LIKES';
+  }
 };
 
 async function loadRemain(){
@@ -583,7 +642,9 @@ async function loadRemain(){
         }
       }
       box.innerHTML=html;
-    } else { box.innerHTML='<div class="row"><span class="label">No data</span><span class="value">-</span></div>'; }
+    } else {
+      box.innerHTML='<div class="row"><span class="label">No data</span><span class="value">-</span></div>';
+    }
   }catch(e){box.innerHTML='Error';}
 }
 
@@ -592,10 +653,16 @@ async function loadStatus(){
     const x=await fetch('/api/tokens/status');
     const d=await x.json();
     let html='';
+    let total=0;
     for(const [reg,cnt] of Object.entries(d.tokens)){
-      const color=cnt==='missing'?'#ff6666':'#00ff88';
+      const color = cnt==='missing'?'#ff6666':(cnt===0?'#ffaa00':'#00ff88');
+      if(typeof cnt === 'number') total += cnt;
       html+=`<div class="row"><span class="label">🌍 ${reg}</span><span class="value" style="color:${color}">${cnt} tokens</span></div>`;
     }
+    html += `<div class="row" style="border-top:1px solid #ffd70055;margin-top:5px;padding-top:8px">
+      <span class="label" style="color:#ffd700">📦 TOTAL</span>
+      <span class="value big">${total}</span>
+    </div>`;
     document.getElementById('tokenStatus').innerHTML=html;
   }catch(e){document.getElementById('tokenStatus').innerHTML='Error';}
 }
@@ -631,7 +698,7 @@ async function loadHistory(){
 }
 
 loadStatus(); loadHistory(); loadStats(); loadRemain();
-setInterval(loadStatus, 60000);
+setInterval(loadStatus, 30000);
 setInterval(loadHistory, 60000);
 setInterval(loadStats, 60000);
 </script>
@@ -639,13 +706,13 @@ setInterval(loadStats, 60000);
 """
 
 # ============================================================
-#  ROUTES — 32 ENDPOINTS
+#  ROUTES
 # ============================================================
-
 @app.get("/")
 def index():
     return render_template_string(INDEX_HTML, brand=BRAND_NAME, dev=DEV_NAME,
                                   owner=OWNER_HANDLE, badge=BADGE_TEXT, version=VERSION)
+
 
 @app.get("/health")
 @app.get("/api/health")
@@ -653,6 +720,7 @@ def health():
     return _jsonify({"status": "ok", "service": BRAND_NAME,
                      "version": VERSION, "release": RELEASE_VERSION,
                      "time": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")})
+
 
 @app.get("/api/tokens/status")
 def tokens_status():
@@ -663,13 +731,17 @@ def tokens_status():
             try:
                 with open(path) as f:
                     info[region] = len(_extract_jwt_list(json.load(f)))
-            except Exception: info[region] = "error"
-        else: info[region] = "missing"
+            except Exception:
+                info[region] = "error"
+        else:
+            info[region] = "missing"
     return _jsonify({"status": "ok", "tokens": info})
+
 
 @app.get("/api/tokens/count")
 def tokens_count():
-    info = {}; total = 0
+    info = {}
+    total = 0
     for region, cfg in SERVER_CONFIG.items():
         path = os.path.join(BASE_DIR, cfg["jwt"])
         cnt = 0
@@ -677,17 +749,22 @@ def tokens_count():
             try:
                 with open(path) as f:
                     cnt = len(_extract_jwt_list(json.load(f)))
-            except Exception: cnt = 0
-        info[region] = cnt; total += cnt
+            except Exception:
+                cnt = 0
+        info[region] = cnt
+        total += cnt
     return _jsonify({"status": "ok", "counts": info, "total": total})
+
 
 @app.get("/api/history")
 def api_history():
     return _jsonify({"status": "ok", "history": load_history()})
 
+
 @app.get("/api/stats")
 def api_stats():
     return _jsonify({"status": "ok", **load_stats()})
+
 
 @app.get("/api/version")
 def api_version():
@@ -695,9 +772,11 @@ def api_version():
                      "release": RELEASE_VERSION, "dev": DEV_NAME,
                      "owner": OWNER_HANDLE, "servers": list(SERVER_CONFIG.keys())})
 
+
 @app.get("/api/ping")
 def api_ping():
     return _jsonify({"pong": True, "time": int(_time.time() * 1000)})
+
 
 @app.get("/api/guests/list")
 def api_guests_list():
@@ -707,39 +786,56 @@ def api_guests_list():
         out[region] = {"count": len(arr), "uids": [a.get("uid") for a in arr[:50]]}
     return _jsonify({"status": "ok", "guests": out})
 
+
 @app.get("/api/guests/count")
 def api_guests_count():
     db = load_guests_db()
     counts = {r: len(arr) for r, arr in db.items()}
     return _jsonify({"status": "ok", "counts": counts, "total": sum(counts.values())})
 
+
 @app.post("/api/token/check")
 def api_token_check():
     data = request.get_json(force=True, silent=True) or {}
     token = (data.get("token") or "").strip()
-    if not token: return _jsonify({"error": "no token"}), 400
+    if not token:
+        return _jsonify({"error": "no token"}), 400
     uid = _decode_jwt_uid(token)
     payload = _decode_jwt_payload(token)
-    exp = payload.get("exp", 0); now = int(_time.time())
+    exp = payload.get("exp", 0)
+    now = int(_time.time())
     region = payload.get("noti_region") or "IND"
-    return _jsonify({"status": "ok", "uid": str(uid), "region": region,
-                     "expires_at": datetime.fromtimestamp(exp).strftime("%Y-%m-%d %I:%M:%S %p") if exp else "N/A",
-                     "valid": exp > now, "seconds_left": max(0, exp - now)})
+    return _jsonify({
+        "status": "ok", "uid": str(uid), "region": region,
+        "expires_at": datetime.fromtimestamp(exp).strftime("%Y-%m-%d %I:%M:%S %p") if exp else "N/A",
+        "valid": exp > now, "seconds_left": max(0, exp - now)
+    })
+
 
 @app.post("/api/tokens/check")
 def api_tokens_check():
     data = request.get_json(force=True, silent=True) or {}
     tokens = data.get("tokens", [])
-    if not isinstance(tokens, list): return _jsonify({"error": "tokens must be list"}), 400
-    now = int(_time.time()); out = []; valid = 0; expired = 0
+    if not isinstance(tokens, list):
+        return _jsonify({"error": "tokens must be list"}), 400
+    now = int(_time.time())
+    out = []
+    valid = 0
+    expired = 0
     for t in tokens[:500]:
-        uid = _decode_jwt_uid(t); payload = _decode_jwt_payload(t)
-        exp = payload.get("exp", 0); is_valid = exp > now
-        if is_valid: valid += 1
-        else: expired += 1
+        uid = _decode_jwt_uid(t)
+        payload = _decode_jwt_payload(t)
+        exp = payload.get("exp", 0)
+        is_valid = exp > now
+        if is_valid:
+            valid += 1
+        else:
+            expired += 1
         out.append({"uid": str(uid), "region": payload.get("noti_region", "?"),
                     "valid": is_valid, "seconds_left": max(0, exp - now)})
-    return _jsonify({"status": "ok", "total": len(out), "valid": valid, "expired": expired, "results": out})
+    return _jsonify({"status": "ok", "total": len(out),
+                     "valid": valid, "expired": expired, "results": out})
+
 
 @app.post("/api/tokens/push")
 def tokens_push():
@@ -749,42 +845,47 @@ def tokens_push():
         return _jsonify({"error": "unauthorized"}), 401
     try:
         data = request.get_json(force=True, silent=True) or {}
-        tokens = data.get("tokens", {}); source = data.get("source", "bot")
+        tokens = data.get("tokens", {})
+        source = data.get("source", "bot")
         req_server = (data.get("server") or "").upper().strip()
         if not tokens or not isinstance(tokens, dict):
             add_history("❌ Push Rejected", "No tokens")
             return _jsonify({"error": "no tokens"}), 400
         valid_regions = set(SERVER_CONFIG.keys())
         def is_jwt(s):
-            return (isinstance(s, str) and len(s) > 50 and s.count(".") == 2 and s.startswith("eyJ"))
-        written = {}; total = 0; invalid = 0; rejected = []
+            return (isinstance(s, str) and len(s) > 50
+                    and s.count(".") == 2 and s.startswith("eyJ"))
+        written = {}
+        total = 0
+        invalid = 0
+        rejected = []
         for rk, jl in tokens.items():
             rk = rk.upper()
-            if rk not in valid_regions: rejected.append(rk); continue
-            if not isinstance(jl, list): continue
+            if rk not in valid_regions:
+                rejected.append(rk); continue
+            if not isinstance(jl, list):
+                continue
             vj = [t for t in jl if is_jwt(t)]
             invalid += len(jl) - len(vj)
-            if not vj: continue
-            cnt = _save_jwt_for_server(rk, vj); written[rk] = cnt; total += cnt
+            if not vj:
+                continue
+            cnt = _save_jwt_for_server(rk, vj)
+            written[rk] = cnt
+            total += cnt
         if total == 0:
             add_history("❌ Push Rejected", f"Invalid: {invalid} | Rejected: {rejected}")
             return _jsonify({"error": "no valid tokens"}), 400
         summary = ", ".join(f"{r}:{c}" for r, c in written.items() if c > 0)
         add_history("✅ Token Update", f"{source} | {total} tokens | {summary}")
-        return _jsonify({"status": "ok", "written": written, "total": total, "invalid_skipped": invalid})
+        return _jsonify({"status": "ok", "written": written, "total": total,
+                         "invalid_skipped": invalid})
     except Exception as e:
         add_history("❌ Push Error", str(e)[:100])
         return _jsonify({"error": str(e)}), 500
 
-# ============================================================
-#  ✅ NEW — DIRECT TOKEN UPLOAD (no uid:password needed)
-# ============================================================
+
 @app.post("/api/tokens/upload")
 def tokens_upload():
-    """
-    Direct JWT tokens upload karo (bina uid:password ke)
-    Body: {"region": "IND", "tokens": ["eyJ...", "eyJ..."]}
-    """
     key = request.headers.get("X-API-Key", "").strip()
     if key != API_KEY:
         return _jsonify({"error": "unauthorized"}), 401
@@ -808,20 +909,25 @@ def tokens_upload():
     except Exception as e:
         return _jsonify({"error": str(e)}), 500
 
+
 @app.get("/api/tokens/get")
 def tokens_get():
     key = request.headers.get("X-API-Key", "").strip()
-    if key != API_KEY: return _jsonify({"error": "unauthorized"}), 401
+    if key != API_KEY:
+        return _jsonify({"error": "unauthorized"}), 401
     region = request.args.get("region", "").upper()
     if not region or region not in SERVER_CONFIG:
         return _jsonify({"error": "invalid region"}), 400
     tokens = _load_jwt_for_server(region)
-    return _jsonify({"status": "ok", "region": region, "count": len(tokens), "tokens": tokens})
+    return _jsonify({"status": "ok", "region": region,
+                     "count": len(tokens), "tokens": tokens})
+
 
 @app.post("/api/tokens/clear")
 def tokens_clear():
     key = request.headers.get("X-API-Key", "").strip()
-    if key != API_KEY: return _jsonify({"error": "unauthorized"}), 401
+    if key != API_KEY:
+        return _jsonify({"error": "unauthorized"}), 401
     data = request.get_json(force=True, silent=True) or {}
     region = (data.get("region") or "").upper()
     if not region or region not in SERVER_CONFIG:
@@ -830,9 +936,7 @@ def tokens_clear():
     add_history("🗑️ Token Clear", f"Region: {region}")
     return _jsonify({"status": "ok", "cleared": region})
 
-# ============================================================
-#  REMAIN — LEVEL BASED (FAST)
-# ============================================================
+
 @app.get("/remain")
 @app.get("/api/remain")
 def remain_info():
@@ -841,14 +945,18 @@ def remain_info():
         return _jsonify({"error": "invalid region"}), 400
     tokens = _load_jwt_for_server(region)
     guest_lookup = _build_guest_lookup()
-    total_limit = 0; total_used = 0; by_level = {}
+    total_limit = 0
+    total_used = 0
+    by_level = {}
     for token in tokens:
         uid = str(_decode_jwt_uid(token) or "")
-        if not uid: continue
+        if not uid:
+            continue
         level = guest_lookup.get(uid, {}).get("level", 8)
         limit = get_level_limit(level)
         used = _get_used_per_token(uid)
-        total_limit += limit; total_used += used
+        total_limit += limit
+        total_used += used
         lvl_key = str(level)
         if lvl_key not in by_level:
             by_level[lvl_key] = {"count": 0, "limit": 0, "used": 0, "remaining": 0}
@@ -859,12 +967,15 @@ def remain_info():
     total_remaining = max(0, total_limit - total_used)
     return _jsonify({
         "status": "ok",
-        "data": {region: {"total_tokens": len(tokens), "total_limit": total_limit,
-                          "total_used": total_used, "total_remaining": total_remaining,
-                          "by_level": by_level}},
+        "data": {region: {
+            "total_tokens": len(tokens), "total_limit": total_limit,
+            "total_used": total_used, "total_remaining": total_remaining,
+            "by_level": by_level
+        }},
         "time": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p"),
         "note": "Level-based limits: 8→20, 21→200, 31→300"
     })
+
 
 @app.get("/api/remain/detailed")
 def remain_detailed():
@@ -872,12 +983,15 @@ def remain_detailed():
     if region not in SERVER_CONFIG:
         return _jsonify({"error": "invalid region"}), 400
     tokens = _load_jwt_for_server(region)
-    if not tokens: return _jsonify({"status": "ok", "data": {}, "note": "No tokens"})
-    limit = min(len(tokens), 50); check = tokens[:limit]
+    if not tokens:
+        return _jsonify({"status": "ok", "data": {}, "note": "No tokens"})
+    limit = min(len(tokens), 50)
+    check = tokens[:limit]
     def fetch_one(token, idx):
         try:
             uid = _decode_jwt_uid(token)
-            if not uid: return {"index": idx, "status": "invalid"}
+            if not uid:
+                return {"index": idx, "status": "invalid"}
             enc_uid = enc(uid)
             info = _parse_account_info(make_request(enc_uid, region, token))
             if info:
@@ -892,8 +1006,10 @@ def remain_detailed():
         futs = {ex.submit(fetch_one, t, i+1): i for i, t in enumerate(check)}
         for f in as_completed(futs):
             i = futs[f]
-            try: infos[i] = f.result()
-            except: infos[i] = {"index": i+1, "status": "error"}
+            try:
+                infos[i] = f.result()
+            except Exception:
+                infos[i] = {"index": i+1, "status": "error"}
     valid = sum(1 for x in infos if x and x.get("status") == "valid")
     total_rem = sum(x.get("remaining", 0) for x in infos if x and x.get("status") == "valid")
     scale = len(tokens) / limit if limit else 1
@@ -901,9 +1017,7 @@ def remain_detailed():
                      "checked": limit, "valid": valid,
                      "total_remaining_estimate": int(total_rem * scale), "tokens": infos})
 
-# ============================================================
-#  LIKE — MAIN (Per-Token + Level-Based)
-# ============================================================
+
 @app.get("/like")
 @app.get("/api/like")
 def handle_like():
@@ -922,7 +1036,8 @@ def handle_like():
         if not tokens:
             return _jsonify({"error": "No tokens available"}), 500
         guest_lookup = _build_guest_lookup()
-        first_token = tokens[0]; encrypted = enc(uid)
+        first_token = tokens[0]
+        encrypted = enc(uid)
         before = _parse_account_info(make_request(encrypted, server_name, first_token))
         if before is None:
             return _jsonify({
@@ -930,13 +1045,16 @@ def handle_like():
                 "PlayerNickname": "Unknown", "UID": uid, "GiftCount": 0,
                 "tokens_total": len(tokens), "tokens_success": 0, "tokens_failed": 0,
                 "success_tokens": [], "failed_tokens": [], "server_name": server_name,
-                "status": 0, "elapsed": round(_time.time() - t_start, 2)})
+                "status": 0, "elapsed": round(_time.time() - t_start, 2)
+            })
         url = _like_url_for(server_name)
         msg = create_protobuf_message(uid, server_name)
         enc_uid = encrypt_message(msg)
+
         async def run_per_token():
             sem = asyncio.Semaphore(LIKE_CONCUR)
             connector = aiohttp.TCPConnector(limit=LIKE_CONCUR, ssl=False)
+
             async def try_token(token, idx):
                 async with sem:
                     tok_uid = str(_decode_jwt_uid(token) or "unknown")
@@ -960,26 +1078,32 @@ def handle_like():
                                         "password": tok_pwd, "level": tok_level,
                                         "http_status": r.status,
                                         "status": "success" if r.status == 200 else f"failed_{r.status}"}
-                    except Exception as e:
+                    except Exception:
                         return {"index": idx, "token_uid": tok_uid, "password": tok_pwd,
                                 "level": tok_level, "http_status": 0, "status": "error"}
+
             tasks = []
             for i, t in enumerate(tokens):
                 tok_uid = str(_decode_jwt_uid(t) or "")
                 lvl = guest_lookup.get(tok_uid, {}).get("level", 8)
-                if lvl >= 31: repeats = 10
-                elif lvl >= 21: repeats = 5
-                else: repeats = 2
+                if lvl >= 31:
+                    repeats = 10
+                elif lvl >= 21:
+                    repeats = 5
+                else:
+                    repeats = 2
                 for _ in range(repeats):
                     tasks.append(asyncio.create_task(try_token(t, i+1)))
-            results = await asyncio.gather(*tasks)
-            return results
+            return await asyncio.gather(*tasks)
+
         per_token_results = asyncio.run(run_per_token())
         token_map = {}
         for r in per_token_results:
             uid_k = r["token_uid"]
-            if uid_k not in token_map: token_map[uid_k] = r
-            elif r["status"] == "success": token_map[uid_k] = r
+            if uid_k not in token_map:
+                token_map[uid_k] = r
+            elif r["status"] == "success":
+                token_map[uid_k] = r
         unique_results = list(token_map.values())
         success_tokens = [r for r in unique_results if r["status"] == "success"]
         failed_tokens = [r for r in unique_results if r["status"] != "success"]
@@ -994,44 +1118,30 @@ def handle_like():
                 send_report_to_bot(uid, str(after["name"]), server_name, like_given,
                                    int(before["likes"]), int(after["likes"]), gift,
                                    round(_time.time() - t_start, 2), len(tokens), success_tokens)
-            except Exception as e: print(f"[REPORT] {e}")
-        add_history("❤️ Like Sent", f"Target: {after['name']} ({after['uid']}) | +{like_given} | {len(success_tokens)}/{len(tokens)} tokens")
+            except Exception as e:
+                print(f"[REPORT] {e}")
+        add_history("❤️ Like Sent",
+                    f"Target: {after['name']} ({after['uid']}) | +{like_given} | {len(success_tokens)}/{len(tokens)} tokens")
         return _jsonify({
-            "LikesGivenByAPI": like_given, "LikesafterCommand": int(after["likes"]),
-            "LikesbeforeCommand": int(before["likes"]), "PlayerNickname": str(after["name"]),
-            "UID": int(after["uid"]), "GiftCount": gift, "server_name": server_name,
-            "status": 1 if like_given > 0 else 2, "elapsed": round(_time.time() - t_start, 2),
-            "tokens_total": len(tokens), "tokens_success": len(success_tokens),
-            "tokens_failed": len(failed_tokens), "requests_sent": len(per_token_results),
-            "success_tokens": success_tokens[:50], "failed_tokens": failed_tokens[:50]})
+            "LikesGivenByAPI": like_given,
+            "LikesafterCommand": int(after["likes"]),
+            "LikesbeforeCommand": int(before["likes"]),
+            "PlayerNickname": str(after["name"]),
+            "UID": int(after["uid"]),
+            "GiftCount": gift,
+            "server_name": server_name,
+            "status": 1 if like_given > 0 else 2,
+            "elapsed": round(_time.time() - t_start, 2),
+            "tokens_total": len(tokens),
+            "tokens_success": len(success_tokens),
+            "tokens_failed": len(failed_tokens),
+            "requests_sent": len(per_token_results),
+            "success_tokens": success_tokens[:50],
+            "failed_tokens": failed_tokens[:50]
+        })
     except Exception as e:
         return _jsonify({"error": "runtime_error", "detail": str(e)}), 500
 
-@app.post("/api/like/bulk")
-def handle_bulk_like():
-    try:
-        data = request.get_json(force=True, silent=True) or {}
-        api_key = data.get("key", "").strip()
-        region = (data.get("server_name") or data.get("region") or "").upper()
-        targets = data.get("targets", [])
-        if not api_key or not is_valid_key(api_key):
-            return _jsonify({"error": "Invalid API key"}), 403
-        if not region or region not in SERVER_CONFIG:
-            return _jsonify({"error": "Invalid region"}), 400
-        if not isinstance(targets, list) or not targets:
-            return _jsonify({"error": "targets required"}), 400
-        results = []
-        for target in targets[:20]:
-            target = str(target).strip()
-            try:
-                url = f"http://127.0.0.1:{os.environ.get('PORT', 5000)}/api/like"
-                r = requests.get(url, params={"uid": target, "server_name": region, "key": api_key}, timeout=120)
-                results.append({"target": target, "result": r.json()})
-            except Exception as e:
-                results.append({"target": target, "error": str(e)[:100]})
-        return _jsonify({"status": "ok", "results": results})
-    except Exception as e:
-        return _jsonify({"error": str(e)}), 500
 
 @app.get("/api/player/info")
 def api_player_info():
@@ -1043,11 +1153,14 @@ def api_player_info():
     if not uid or region not in SERVER_CONFIG:
         return _jsonify({"error": "uid required"}), 400
     tokens = _load_jwt_for_server(region)
-    if not tokens: return _jsonify({"error": "No tokens"}), 500
+    if not tokens:
+        return _jsonify({"error": "No tokens"}), 500
     encrypted = enc(uid)
     info = _parse_account_info(make_request(encrypted, region, tokens[0]))
-    if info: return _jsonify({"status": "ok", **info})
+    if info:
+        return _jsonify({"status": "ok", **info})
     return _jsonify({"status": "error", "error": "Not found"}), 404
+
 
 @app.get("/api/player/check")
 def api_player_check():
@@ -1056,10 +1169,12 @@ def api_player_check():
     if not uid or region not in SERVER_CONFIG:
         return _jsonify({"error": "uid required"}), 400
     tokens = _load_jwt_for_server(region)
-    if not tokens: return _jsonify({"exists": False, "error": "no tokens"}), 500
+    if not tokens:
+        return _jsonify({"exists": False, "error": "no tokens"}), 500
     encrypted = enc(uid)
     info = _parse_account_info(make_request(encrypted, region, tokens[0]))
     return _jsonify({"exists": info is not None, "uid": uid, "region": region, "data": info})
+
 
 @app.get("/api/history/likes")
 def api_history_likes():
@@ -1067,18 +1182,22 @@ def api_history_likes():
     likes = [h for h in history if "Like" in h.get("type", "")]
     return _jsonify({"status": "ok", "likes": likes[:20]})
 
+
 @app.post("/api/jwt/generate")
 def api_jwt_generate():
     data = request.get_json(force=True, silent=True) or {}
     uid = str(data.get("uid", "")).strip()
     pwd = str(data.get("password", "")).strip()
-    if not uid or not pwd: return _jsonify({"error": "uid & password required"}), 400
+    if not uid or not pwd:
+        return _jsonify({"error": "uid & password required"}), 400
     try:
         r = requests.get(JWT_API_BASE, params={"uid": uid, "password": pwd}, timeout=30)
-        if r.status_code == 200: return _jsonify({"status": "ok", "response": r.json()})
+        if r.status_code == 200:
+            return _jsonify({"status": "ok", "response": r.json()})
         return _jsonify({"error": f"HTTP {r.status_code}"}), 500
     except Exception as e:
         return _jsonify({"error": str(e)}), 500
+
 
 @app.post("/api/jwt/generate/bulk")
 def api_jwt_generate_bulk():
@@ -1088,6 +1207,7 @@ def api_jwt_generate_bulk():
         return _jsonify({"error": "accounts list required"}), 400
     accounts = accounts[:200]
     tuples = [(str(a.get("uid", "")), str(a.get("password", ""))) for a in accounts if a.get("uid")]
+
     def fetch_one(t):
         uid, pwd = t
         try:
@@ -1095,18 +1215,24 @@ def api_jwt_generate_bulk():
             if r.status_code == 200:
                 j = r.json()
                 return j.get("token") or j.get("jwt_token")
-        except Exception: pass
+        except Exception:
+            pass
         return None
+
     tokens = []
     with ThreadPoolExecutor(max_workers=30) as ex:
         for res in ex.map(fetch_one, tuples):
-            if res: tokens.append(res)
-    return _jsonify({"status": "ok", "total": len(tuples), "success": len(tokens), "tokens": tokens})
+            if res:
+                tokens.append(res)
+    return _jsonify({"status": "ok", "total": len(tuples),
+                     "success": len(tokens), "tokens": tokens})
+
 
 @app.post("/api/admin/add-guest")
 def api_admin_add_guest():
     key = request.headers.get("X-API-Key", "").strip()
-    if key != API_KEY: return _jsonify({"error": "unauthorized"}), 401
+    if key != API_KEY:
+        return _jsonify({"error": "unauthorized"}), 401
     data = request.get_json(force=True, silent=True) or {}
     region = (data.get("region") or "").upper()
     uid = str(data.get("uid", "")).strip()
@@ -1116,30 +1242,38 @@ def api_admin_add_guest():
         return _jsonify({"error": "region, uid, password required"}), 400
     db = load_guests_db()
     existing = {(a.get("uid"), a.get("password")) for a in db.get(region, [])}
-    if (uid, pwd) in existing: return _jsonify({"status": "exists"})
+    if (uid, pwd) in existing:
+        return _jsonify({"status": "exists"})
     db.setdefault(region, []).append({"uid": uid, "password": pwd, "level": level})
-    with open(GUESTS_DB_PATH, "w") as f: json.dump(db, f, indent=2)
+    with open(GUESTS_DB_PATH, "w") as f:
+        json.dump(db, f, indent=2)
     return _jsonify({"status": "ok", "region": region, "uid": uid, "level": level})
+
 
 @app.post("/api/admin/remove-guest")
 def api_admin_remove_guest():
     key = request.headers.get("X-API-Key", "").strip()
-    if key != API_KEY: return _jsonify({"error": "unauthorized"}), 401
+    if key != API_KEY:
+        return _jsonify({"error": "unauthorized"}), 401
     data = request.get_json(force=True, silent=True) or {}
     region = (data.get("region") or "").upper()
     uid = str(data.get("uid", "")).strip()
-    if not region or not uid: return _jsonify({"error": "region & uid required"}), 400
+    if not region or not uid:
+        return _jsonify({"error": "region & uid required"}), 400
     db = load_guests_db()
     old = len(db.get(region, []))
     db[region] = [a for a in db.get(region, []) if str(a.get("uid")) != uid]
     new = len(db[region])
-    with open(GUESTS_DB_PATH, "w") as f: json.dump(db, f, indent=2)
+    with open(GUESTS_DB_PATH, "w") as f:
+        json.dump(db, f, indent=2)
     return _jsonify({"status": "ok", "removed": old - new, "left": new})
+
 
 @app.post("/api/admin/clear-guests")
 def api_admin_clear_guests():
     key = request.headers.get("X-API-Key", "").strip()
-    if key != API_KEY: return _jsonify({"error": "unauthorized"}), 401
+    if key != API_KEY:
+        return _jsonify({"error": "unauthorized"}), 401
     data = request.get_json(force=True, silent=True) or {}
     region = (data.get("region") or "").upper()
     if not region or region not in SERVER_CONFIG:
@@ -1147,50 +1281,67 @@ def api_admin_clear_guests():
     db = load_guests_db()
     old = len(db.get(region, []))
     db[region] = []
-    with open(GUESTS_DB_PATH, "w") as f: json.dump(db, f, indent=2)
+    with open(GUESTS_DB_PATH, "w") as f:
+        json.dump(db, f, indent=2)
     return _jsonify({"status": "ok", "region": region, "cleared": old})
+
 
 @app.post("/api/admin/clear-history")
 def api_admin_clear_history():
     key = request.headers.get("X-API-Key", "").strip()
-    if key != API_KEY: return _jsonify({"error": "unauthorized"}), 401
+    if key != API_KEY:
+        return _jsonify({"error": "unauthorized"}), 401
     save_history([])
     return _jsonify({"status": "ok"})
+
 
 @app.post("/api/admin/reset-stats")
 def api_admin_reset_stats():
     key = request.headers.get("X-API-Key", "").strip()
-    if key != API_KEY: return _jsonify({"error": "unauthorized"}), 401
-    stats = {"total_likes": 0, "total_requests": 0, "total_errors": 0,
-             "by_region": {r: {"likes": 0, "requests": 0} for r in SERVER_CONFIG.keys()},
-             "by_key": {}, "started": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p"),
-             "last_updated": None}
+    if key != API_KEY:
+        return _jsonify({"error": "unauthorized"}), 401
+    stats = {
+        "total_likes": 0, "total_requests": 0, "total_errors": 0,
+        "by_region": {r: {"likes": 0, "requests": 0} for r in SERVER_CONFIG.keys()},
+        "by_key": {},
+        "started": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p"),
+        "last_updated": None
+    }
     save_stats(stats)
     return _jsonify({"status": "ok"})
+
 
 @app.get("/api/key/info")
 def api_key_info():
     key = request.args.get("key", "").strip()
-    if not key: return _jsonify({"error": "key required"}), 400
+    if not key:
+        return _jsonify({"error": "key required"}), 400
     try:
-        allowed = get_allowed_keys(); admin = get_admin_keys()
-        if key in allowed: return _jsonify({"status": "ok", "type": "allowed", "limit": allowed.get(key, 0)})
-        if key in admin: return _jsonify({"status": "ok", "type": "admin", "limit": 999999})
+        allowed = get_allowed_keys()
+        admin = get_admin_keys()
+        if key in allowed:
+            return _jsonify({"status": "ok", "type": "allowed", "limit": allowed.get(key, 0)})
+        if key in admin:
+            return _jsonify({"status": "ok", "type": "admin", "limit": 999999})
         return _jsonify({"status": "invalid"})
     except Exception as e:
         return _jsonify({"error": str(e)}), 500
+
 
 @app.get("/api/leaderboard")
 def api_leaderboard():
     stats = load_stats()
     by_key = stats.get("by_key", {})
     sorted_keys = sorted(by_key.items(), key=lambda x: x[1].get("likes", 0), reverse=True)
-    board = [{"key": k, "likes": v.get("likes", 0), "requests": v.get("requests", 0)} for k, v in sorted_keys[:10]]
+    board = [{"key": k, "likes": v.get("likes", 0), "requests": v.get("requests", 0)}
+             for k, v in sorted_keys[:10]]
     return _jsonify({"status": "ok", "leaderboard": board})
+
 
 @app.get("/api/bot/health")
 def api_bot_health():
     return _jsonify({"status": "ok", "bot_friendly": True})
+
 
 # ============================================================
 #  RUN
